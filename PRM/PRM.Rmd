@@ -1,0 +1,1470 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+plot(cars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+#Libraries
+```{r message=FALSE}
+  library(tidyverse)
+  library(OrgMassSpecR)
+  library(tidymodels)
+  tidymodels_prefer()
+  library(ggpubr)
+  options(tibble.width = Inf)
+  library(MSnbase)
+  library(peakPantheR)
+  conflicted::conflicts_prefer(dplyr::first)
+  library(limma)
+  library(crmn)
+```
+
+
+
+## AlphaPeptDeep (APD) for a QC data
+```{r}
+###ALPHAPEPTDEEP RT MODULE: PRM.ipynb ##40 sec
+###output: C:\Users\admin\alphapeptdeep\project\alphapeptdeep_117\alphapeptdeep\export\output\training_rt_output.tsv
+###DONE?
+a=Sys.time()
+python <- "C:/Users/admin/anaconda3/envs/peptdeep115/python.exe"
+script <- "C:/Users/admin/alphapeptdeep/project/alphapeptdeep_115/alphapeptdeep/rt_qc_analysis_transfer.py"
+system2(command = python, args = shQuote(script), stdout = TRUE, stderr = FALSE)
+b=Sys.time()
+paste0(round(as.numeric(difftime(time1 = b, time2 = a, units = "secs")), 3))
+```
+
+## APD Result Reading:: QC statistics
+table_qc_training >> table_qc_training_output >> table_qc_training_output_fit
+fit_rt_training: linear model
+table_qc_training_output+fit_rt_training >> table_qc_training_output_fit
+table_qc_training_output_fit >> summary_rtprediction_t95
+table_qc_training_output_fit >> summary_rtprediction for MAE, RSQ, and RMSE
+```{r}
+##RUN THIS after done #2 or 3 sec
+
+a=Sys.time()
+
+table_qc_training %>% 
+  bind_cols(
+    read_tsv(
+      paste0(folder_alphapeptdeep,"output/training_rt_output.tsv")
+    ) %>% select(rt_pred)
+  ) %>% 
+  mutate(
+    irt_pred = rt_pred*rt_duration+rt_start
+  ) -> table_qc_training_output
+  
+  
+  
+fit_rt_training <- lm(irt ~ irt_pred, data =table_qc_training_output)
+
+table_qc_training_output %>% 
+  bind_cols(
+    predict(fit_rt_training, interval = "prediction", level =0.95, newdata = table_qc_training_output)
+  ) -> table_qc_training_output_fit
+
+#t95
+table_qc_training_output_fit %>% 
+  mutate(t95=upr-lwr) %>% 
+  summarise(
+    t95_mean = mean(t95)
+  ) -> summary_rtprediction_t95
+  
+##mae rsq rmse
+table_qc_training_output_fit %>% 
+  metrics(
+    truth = irt, estimate = irt_pred
+  ) -> summary_rtprediction
+```
+
+# APD for QC Figure
+table_qc_training_output_fit >> data_rt_plot
+```{r}
+table_qc_training_output_fit %>% 
+  ggplot(aes(x=irt, y=irt_pred))+
+  geom_point(size=0.5,alpha=0.5) +
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=1.2,
+    label=bquote(
+      ~Delta*italic(t)[95*'%'] == .(str_sub(paste0(summary_rtprediction_t95[1,1]),1,5))*","~R^2==.(summary_rtprediction %>% filter(.metric =="rsq") %>% pull(.estimate) %>% round(3))
+    ),size =4
+  )+
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=3.2,
+    label=bquote(
+      ~MAE==.(summary_rtprediction %>% filter(.metric =="mae") %>% pull(.estimate) %>% round(3))*","~N==.(table_qc_training_output %>% nrow())
+    ),size =4
+  )+
+  geom_line(aes(x=lwr), color = "red", linetype = "dashed")+
+  geom_line(aes(x=upr), color = "red", linetype = "dashed")+
+  geom_smooth(method=lm, se=TRUE)+
+  #lims(x=c(0,1),y=c(0,1))+
+  labs(
+    x="Observed RT (min)",
+    y="Predicted RT (min)"
+  )+
+  theme_classic2()+
+  theme(
+    axis.text = element_text(color = "black",size=10),
+    axis.title = element_text(color = "black",size=11)
+  )
+ggsave(
+  paste0("./figures/rt/rt_prediction_training_",project_name,".png"),width=10,height=10,dpi = 600,units="cm"
+)
+  
+table_qc_training_output_fit %>% 
+  filter(
+    str_detect(sequence,"^R")
+  ) -> data_rt_plot
+  
+data_rt_plot %>% 
+  ggplot(aes(x=irt, y=irt_pred))+
+  geom_point(size=0.5,alpha=0.5) +
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=1.2,
+    label=bquote(
+      ~Delta*italic(t)[95*'%'] == .(str_sub(paste0(summary_rtprediction_t95[1,1]),1,5))*","~R^2==.(summary_rtprediction %>% filter(.metric =="rsq") %>% pull(.estimate) %>% round(3))
+    ),size =4
+  )+
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=3.2,
+    label=bquote(
+      ~MAE==.(summary_rtprediction %>% filter(.metric =="mae") %>% pull(.estimate) %>% round(3))*","~N==.(data_rt_plot %>% nrow())
+    ),size =4
+  )+
+  geom_line(aes(x=lwr), color = "red", linetype = "dashed")+
+  geom_line(aes(x=upr), color = "red", linetype = "dashed")+
+  #geom_smooth(method=lm, se=TRUE)+
+  #lims(x=c(0,1),y=c(0,1))+
+  labs(
+    x="Observed RT (min)",
+    y="Predicted RT (min)"
+  )+
+  theme_classic2()+
+  theme(
+    axis.text = element_text(color = "black",size=10),
+    axis.title = element_text(color = "black",size=11)
+  )
+ggsave(
+  paste0("./figures/rt/rt_prediction_training_arg_",project_name,".png"),width=10,height=10,dpi = 600,units="cm"
+)
+
+  #@table_qc_training_output
+  #@fit_rt_training
+  #@table_qc_training_output_fit
+  #@summary_rtprediction_t95
+  #@summary_rtprediction
+  #@data_rt_plot
+  #@rt_prediction_training.png
+  #@rt_prediction_training_arg.png
+  
+```
+
+## APD Result Reading:: for test set
+Figures for Target RT histogram, PRTC RT deviation, 
+table_arg_predicted
+```{r}
+  ##READ rt prediction ::run every QC
+
+read_tsv(
+  paste0(folder_alphapeptdeep,"output/testing_rt_output.tsv")
+)->table_arg_predicted
+
+table_arg_predicted %>% 
+  mutate(
+    irt_pred = rt_pred*rt_duration+rt_start
+  ) -> table_arg_predicted
+```
+
+## APD Result Figure:: Targets RT histogram
+table_arg_predicted
+```{r}
+table_arg_predicted %>% 
+  distinct(sequence,.keep_all = TRUE) %>% 
+  ggplot(
+    aes(x=irt_pred)
+  )+
+  geom_histogram(
+    binwidth = 1,
+    color = "black",
+    fill = "#377EB8"
+  )+
+  theme_bw()
+ggsave(
+  paste0("./figures/rt/arg_prediction_histogram_",project_name,".png"),width=10,height=10,dpi = 600,units="cm"
+)
+```
+
+## APD Result Figure:: PRTC RT deviations
+table_arg_predicted
+```{r}
+table_arg_predicted %>% 
+  filter(cleavage_type=="PRTC") %>% 
+  select(
+    gene_position,irt_pred
+  ) %>% 
+  left_join(
+    table_qc_training %>% 
+      filter(
+        sequence %in% table_prtc$sequence
+      ) %>% 
+      left_join(
+        table_prtc %>% select(sequence,gene_position)
+      ) %>% 
+      select(
+        gene_position, irt
+      )
+  ) %>% 
+  mutate(
+    irt_irt_pred=irt-irt_pred
+  ) %>% 
+  ggplot(
+    aes(x=gene_position, y=irt_irt_pred)
+  )+
+  geom_bar(
+    stat= "identity"
+  )+
+  labs(x="PRTC",y="Observed RT - Predicted RT")+
+  theme_bw()+
+  theme(
+    axis.text = element_text(color="black"),
+    axis.text.x = element_text(angle=45,hjust =1),
+  )
+ggsave(
+  paste0("./figures/rt/rt_prediction_prtc_",project_name,".png"),width=20,height=10,dpi = 600,units="cm"
+)
+```
+
+## Write Inclusion List
+table_arg_predicted >> inclusionlist.csv
+```{r}
+##write inclusion list ##target type arg 240406
+table_arg_predicted %>% 
+  mutate(
+    passed = case_when(
+      target_type == "arg" & charge == 3 ~ TRUE,
+      target_type == "free" & charge == 2 ~ TRUE,
+      .default = FALSE
+    )
+  ) %>% 
+  filter(
+    (passed == TRUE & cleavage_type %in% c("SP","mTP")) |
+      (passed == TRUE & gene_position %in% vector_nucleus_arg)|
+      (passed == TRUE & str_detect(cleavage_type,"C14")) |
+      str_detect(gene_position,"PRTC")|
+      (passed == TRUE & gene_position %in% vector_upr_protein)
+  ) %>% #view()
+  mutate(
+    mz = round(mz,4)
+  ) %>% 
+  mutate(
+    Comment = paste0(gene_position,"_",sequence,"_",charge)
+  ) %>% 
+  distinct(Comment,.keep_all = TRUE) %>% 
+  select(
+    mz,
+    irt_pred,
+    charge,
+    Comment
+  ) %>% 
+  mutate(
+    mz= as.character(mz),
+    lwr = as.character(round(irt_pred,2)-2),
+    upr = as.character(round(irt_pred,2)+4)
+  ) %>% 
+  rename(
+    `Mass [m/z]` = mz,
+    `Start [min]` = lwr,
+    `End [min]` = upr
+  ) %>% 
+  mutate(
+    `Formula [M]` = "",
+    `Formula type` = "",
+    `Species` = "",
+    `CS [z]` = as.character(charge),
+    Polarity = "Positive",
+    `(N)CE` = "",
+    `(N)CE type` = "",
+    `MSX ID` = ""
+  ) %>% 
+  select(
+    `Mass [m/z]`,
+    `Formula [M]`,
+    `Formula type`,
+    `Species`,
+    `CS [z]`,
+    Polarity,
+    `Start [min]`,
+    `End [min]`,
+    `(N)CE`,
+    `(N)CE type`,
+    `MSX ID`,
+    Comment
+  ) %>% 
+  write_csv(
+    paste0("./inclusionlist/incl_",project_name,".csv")
+  )
+# 
+# table_arg_predicted %>% 
+#   mutate(
+#     passed = case_when(
+#       target_type == "arg" & charge == 3 ~ TRUE,
+#       target_type == "free" & charge == 2 ~ TRUE,
+#       .default = FALSE
+#     )
+#   ) %>% 
+#   filter(
+#     (passed == TRUE & cleavage_type %in% c("SP","mTP")) |
+#       (passed == TRUE & gene_position %in% vector_nucleus_arg)|
+#       (passed == TRUE & str_detect(cleavage_type,"C14")) |
+#       str_detect(gene_position,"PRTC")|
+#       (passed == TRUE & gene_position %in% vector_upr_protein)
+#   ) %>% #view()
+#   mutate(
+#     mz = round(mz,4)
+#   ) %>% 
+#   mutate(
+#     Comment = paste0(gene_position,"_",sequence,"_",charge)
+#   ) %>% 
+#   distinct(Comment,.keep_all = TRUE) -> table_arg_predicted_final_target
+```
+# Target List in Inclustion list
+```{r}
+table_arg_predicted %>% 
+  mutate(
+    passed = case_when(
+      target_type == "arg" & charge == 3 ~ TRUE,
+      target_type == "free" & charge == 2 ~ TRUE,
+      .default = FALSE
+    )
+  ) %>% 
+  filter(
+    (passed == TRUE & cleavage_type %in% c("SP","mTP")) |
+      (passed == TRUE & gene_position %in% vector_nucleus_arg)|
+      (passed == TRUE & str_detect(cleavage_type,"C14")) |
+      str_detect(gene_position,"PRTC")|
+      (passed == TRUE & gene_position %in% vector_upr_protein)
+  ) %>% 
+  mutate(
+    gene_position = str_replace(gene_position,regex("\\|"),"_")
+  ) %>% 
+  mutate(
+    arg = if_else(str_detect(sequence,"^R"),"arg","free")
+  ) %>% 
+  mutate(
+    key = paste0(gene_position,"_",arg)
+  ) %>% 
+  summarize(
+    .by = c(arg, cleavage_type),
+    count = n_distinct(key)
+  ) 
+```
+
+
+# Read MS Result:: reading raw files and matching ms2 spectra to targets.
+raws >> ms2_data
+ms2_data@mz_upr = mz + 0.001 :: ms1 mass matching.
+ms2_data@mz_lwr = mz - 0.001
+table_arg_predicted >> table_arg_inclusionlist
+table_arg_inclusionlist
+table_arg_inclusionlist + ms2_data >> result_prm
+```{r}
+MSnbase::readMSData(
+  paste0(folder_raw,file_raw)
+) -> ms2_data
+
+tibble(
+  precursormz = unique(precursorMz(ms2_data))
+) %>% 
+  #head() %>% 
+  mutate(
+    data = map(
+      precursormz,
+      \(x) extractPrecSpectra(ms2_data,x) 
+    ),
+    ms_table = map(
+      data,
+      \(x) extractSpectraData(x) %>% as_tibble() %>% 
+        bind_cols(
+          rt=rtime(x),
+          charge = precursorCharge(x),
+          tic=tic(x),
+          nce = collisionEnergy(x)
+        )
+    )
+  ) -> ms2_data
+  
+ms2_data %>% 
+  select(-data) %>% 
+  unnest(ms_table) %>% 
+  mutate(
+    mz = unname(mz),
+    intensity = unname(intensity)
+  ) %>% 
+  mutate(
+    spec_table = map2(
+      mz,
+      intensity,
+      \(x,y) tibble(mz=x,int=y)
+    )
+  ) %>% 
+  select(-c(mz,intensity)) %>% 
+  nest(data = c(spectrum,charge,nce,rt,tic,spec_table)) -> ms2_data
+
+ms2_data %>% #head() %>% pull(data)
+  mutate(
+    rt_start = map_dbl(
+      data,
+      \(x) arrange(x,rt) %>% slice_head(n=1) %>% pull(rt)
+    )/60,
+    rt_end = map_dbl(
+      data,
+      \(x) arrange(x,rt) %>% slice_tail(n=1) %>% pull(rt)
+    )/60,
+    charge= map_int(
+      data,
+      \(x) arrange(x,rt) %>% slice_head(n=1) %>% pull(charge)
+    ),
+    nce = map_int(
+      data,
+      \(x) arrange(x,rt) %>% slice_head(n=1) %>% pull(nce)
+    )
+  ) -> ms2_data
+
+table_arg_predicted %>% 
+  # filter(
+  #   mz >=300 & mz<=900
+  # ) %>% 
+  filter(
+    charge >1
+  ) %>% 
+  mutate(
+    mz = round(mz,4)
+  ) %>% 
+  mutate(
+    Comment = paste0(gene_position,"_",sequence,"_",charge)
+  ) %>% 
+  select(
+    mz,
+    irt_pred,
+    charge,
+    Comment
+  ) %>% 
+  mutate(
+    mz= as.character(mz),
+    lwr = as.character(round(irt_pred,2)-5),
+    upr = as.character(round(irt_pred,2)+5)
+  ) %>% 
+  mutate(
+    mz= as.double(mz),
+    lwr = as.double(lwr),
+    upr = as.double(upr),
+    charge = as.integer(charge),
+    mz_upr = mz+0.001,
+    mz_lwr = mz-0.001
+  ) -> table_arg_inclusionlist
+
+table_arg_inclusionlist %>% 
+  left_join(
+    ms2_data,
+    join_by(
+      charge == charge,
+      #lwr <= rt_start,
+      # upr >= rt_end,
+      between(y$precursormz,x$mz_lwr,x$mz_upr)
+    )
+  )-> result_prm
+
+```
+## Read MS Result:: Matching observed spectra with theoretical spectra
+result_prm >> result_prm_theospec
+result_prm_theospec >> result_prm_theospec_filtered :: 5 ppm error, at least 4 matchings.
+```{r}
+###SPECTRUM MATCHING
+#result_prm
+result_prm %>% 
+  mutate(
+    gene_position = str_split_i(Comment,"_",1),
+    sequence = str_split_i(Comment,"_",2),
+    charge_inclusionlist = str_split_i(Comment,"_",3)
+  ) %>% 
+  mutate(
+    cys = map(
+      sequence,
+      \(x) str_locate_all(x,"C") %>% deframe() %>% as_tibble
+    )
+  ) %>% 
+  mutate(
+    mod_sites = map_chr(
+      cys,
+      \(x) pull(x, start) %>% paste0(collapse =";")
+    ),
+    mods = str_replace_all(
+      mod_sites,"[0-9]+","Carbamidomethyl@C"
+    )
+  ) %>% 
+  select(-cys) %>% 
+  mutate(
+    index = 1:nrow(.),
+    nAA = str_length(sequence)
+  ) %>% 
+  mutate(
+    mods = case_when(
+      str_detect(gene_position,"PRTC") & str_detect(sequence,"K$")~"Label:13C(6)15N(2)@K",
+      str_detect(gene_position,"PRTC") & str_detect(sequence,"R$")~"Label:13C(6)15N(4)@R",
+      .default = mods
+    ),
+    mod_sites = case_when(
+      str_detect(gene_position,"PRTC") & str_detect(sequence,"K$")~as.character(str_length(sequence)),
+      str_detect(gene_position,"PRTC") & str_detect(sequence,"R$")~as.character(str_length(sequence)),
+      .default = mod_sites
+    )
+  ) %>% 
+  mutate(
+    sequence_mod = case_when(
+      str_detect(gene_position,"PRTC") & str_detect(sequence,"K$") ~ str_replace(sequence,regex("K$"),"k"),
+      str_detect(gene_position,"PRTC") & str_detect(sequence,"R$") ~ str_replace(sequence,regex("R$"),"r"),
+      .default = sequence
+    )
+  ) %>%
+  mutate(
+    theo_spec = map(
+      sequence_mod,
+      \(x) OrgMassSpecR::FragmentPeptide(
+        x,
+        custom = list(code = c("k","r"), mass=c(136.10916,166.10938))
+      )
+    )
+  ) %>%
+  select(-c(charge,nce)) %>% 
+  unnest(data)->result_prm_theospec
+
+##5 ppm error
+result_prm_theospec %>% #head() %>% 
+  mutate(
+    theo_spec=map(
+      theo_spec,
+      \(x) mutate(x,ms2mz_lwr = ms2mz/(1e6+5)*1e6, ms2mz_upr = ms2mz/(1e6-5)*1e6)
+    )
+  ) %>% #pull(theo_spec)
+  mutate(
+    spec_matched = map2(
+      spec_table,
+      theo_spec,
+      \(x,y) left_join(
+        x,y,
+        join_by(
+          between(x$mz,y$ms2mz_lwr,y$ms2mz_upr)
+        ),
+        multiple = "first"
+      )
+    )
+  ) %>%
+  mutate(
+    spec_matched = map(
+      spec_matched,
+      \(x) drop_na(x)
+    ),
+    spec_matched_nrow = map_int(
+      spec_matched,
+      \(x) nrow(x)
+    )
+  ) -> result_prm_theospec
+
+result_prm_theospec %>% 
+  filter(
+    spec_matched_nrow >3
+  ) -> result_prm_theospec_filtered
+```
+
+## Translation of MS Result: Preparing tables for APD
+result_prm_theospec_filtered >> ms2_test.tsv, ms2_test_frag_df.tsv
+result_prm_theospec_filtered >> export/240504_QE_15cm_PRM_G24_DRju_HeLa_48_theospec_result.tsv
+
+```{r}
+result_prm_theospec_filtered %>% #slice_sample(n=20) %>% 
+  mutate(
+    spec_matched = map(
+      spec_matched,
+      \(x) mutate(
+        x,
+        ion_type = str_extract(ms2type,"[by]"),
+        ion_number = str_extract(ms2type,"(?<=[by])[0-9]+"),
+        charge = str_extract(ms2type,"[0-9](?=\\+)"),
+        rel_int = int/max(int),
+        fragment_head = paste0(ion_type,"_z",charge)
+      )
+    )
+  ) %>% 
+  mutate(
+    frag_df0 = map2(
+      spec_matched,
+      nAA,
+      \(x,y) mutate(x, ion_number = if_else(str_detect(fragment_head,"y"),y-as.integer(ion_number),as.integer(ion_number))
+      ) %>% 
+        select(
+          ion_number,fragment_head,rel_int
+        ) %>% 
+        arrange(desc(rel_int)) %>% distinct(fragment_head,ion_number,.keep_all = TRUE)
+    )
+  ) %>%  
+  mutate(
+    frag_df = map(
+      frag_df0,
+      \(x) pivot_wider(x,id_cols = ion_number,names_from = fragment_head,values_from = rel_int) %>% 
+        mutate(
+          ion_number= as.integer(ion_number)
+        )
+    )
+  ) %>% 
+  mutate(
+    frag_df2 = map(
+      nAA,
+      \(x) tibble(
+        ion_number = 1L:(x-1),
+        b_z1=rep(NA_real_,(x-1)),b_z2=rep(NA_real_,(x-1)),y_z1=rep(NA_real_,(x-1)),y_z2=rep(NA_real_,(x-1))
+      )
+    )
+  ) %>% 
+  mutate(
+    frag_df3 = map2(
+      frag_df,
+      frag_df2,
+      \(x,y) full_join(x,y,multiple = "first",join_by(ion_number)) %>% 
+        select(
+          -ends_with("y")
+        ) %>% 
+        rename_with(
+          .fn=\(x) str_replace(x,"\\.x$","")
+        ) %>% 
+        arrange(ion_number) %>% 
+        select(
+          ion_number,b_z1,b_z2,y_z1,y_z2
+        )
+    )
+  ) %>%
+  mutate(
+    frag_df3 = map(
+      frag_df3,
+      \(x) mutate(x,across(everything(),\(y) coalesce(y,0)))
+    )
+  ) %>%
+  select(-c(frag_df0,frag_df,frag_df2)) %>% 
+  unnest(frag_df3) %>% 
+  mutate(
+    frag_index = 0:(nrow(.)-1)
+  ) %>% 
+  nest(
+    frag_df = c(frag_index,ion_number,b_z1:y_z2)
+  ) %>% 
+  mutate(
+    frag_start_idx = map_int(
+      frag_df,
+      \(x) pull(x,frag_index)[1]
+    ),
+    frag_stop_idx = map_int(
+      frag_df,
+      \(x) pull(x,frag_index) %>% tail(n=1)+1
+    )
+  )-> result_prm_theospec_filtered
+
+result_prm_theospec_filtered %>%
+  mutate(
+    spec_idx = 1:nrow(.)
+  ) %>% 
+  select(
+    sequence,charge,spec_idx,spec_matched_nrow,Comment,index,mods,mod_sites,nAA,nce,frag_start_idx,frag_stop_idx
+  ) %>%
+  mutate(
+    instrument = "QE"
+  ) %>% 
+  write_tsv(
+    paste0(
+      folder_alphapeptdeep,"input/ms2_test.tsv"
+    )
+  )
+
+result_prm_theospec_filtered %>% 
+  select(
+    frag_df
+  ) %>% 
+  unnest(frag_df) %>% 
+  select(-c(frag_index,ion_number)) %>% 
+  write_tsv(
+    paste0(
+      folder_alphapeptdeep,"input/ms2_test_frag_df.tsv"
+    )
+  )
+
+result_prm_theospec_filtered %>% 
+  write_tsv(
+    paste0("./export/",str_split_i(file_raw,"\\.",i=1),"_theospec_result.tsv")
+  )
+```
+## Translation of MS Result:: APD running
+```{r}
+python <- "C:/Users/admin/anaconda3/envs/peptdeep115/python.exe"
+script <- "C:/Users/admin/alphapeptdeep/project/alphapeptdeep_115/alphapeptdeep/ms2_matching_run.py"
+system2(command = python, args = shQuote(script), stdout = TRUE, stderr = FALSE)
+```
+
+## Translation of MS Result:: Reading APD result
+output/output_metrics_ms2_prediction.tsv >> result_prm_alphapeptdeep_ms2
+result_prm_theospec_filtered + result_prm_alphapeptdeep_ms2 + output_metrics_ms2_prediction_pretrained.tsv >> result_prm_theospec_filtered_apdms2
+result_prm_theospec_filtered_apdms2 >> _theospec_result_apdms2_summary.tsv !! this going to be result_for analysis object!
+```{r}
+read_tsv(
+    paste0(folder_alphapeptdeep,"output/output_metrics_ms2_prediction.tsv")
+  ) -> result_prm_alphapeptdeep_ms2
+  
+  
+result_prm_theospec_filtered %>% 
+  bind_cols(
+    result_prm_alphapeptdeep_ms2 %>% 
+      select(PCC,COS,SA,SPC)
+  ) %>% 
+  bind_cols(
+    read_tsv(
+      paste0(folder_alphapeptdeep,"output/output_metrics_ms2_prediction_pretrained.tsv")
+    ) %>% select(PCC,COS,SA,SPC) %>% 
+      rename_with(
+        .fn = \(x) paste0(x,"_pretrained"),
+        .cols = everything()
+      )
+  )-> result_prm_theospec_filtered_apdms2
+  
+result_prm_theospec_filtered_apdms2 %>% 
+  mutate(
+    rt_min = rt/60,
+    rt_expect = (upr+lwr)/2,
+    rt_observe_expect = rt_min-rt_expect
+  ) %>%
+  mutate(
+    peak_table_for_graph = map2(
+      spec_table,
+      theo_spec,
+      \(x,y) left_join(
+        x,y,
+        join_by(
+          between(x$mz,y$ms2mz_lwr,y$ms2mz_upr)
+        ),
+        multiple = "first"
+      )
+    )
+  ) %>% #pull(peak_table_for_graph)
+  mutate(
+    peak_table_for_graph= map(
+      peak_table_for_graph,
+      \(x) mutate(x, ion_num = as.integer(str_extract(ms2type,"[0-9]+(?=\\])")))
+    )
+  ) %>% 
+  mutate(
+    peak_table_for_graph= map(
+      peak_table_for_graph,
+      \(x) mutate(
+        x,
+        charge = as.integer(str_extract(ms2type,"[0-9]+(?=\\+)")),
+        series = str_extract(ms2type,"[by]")
+      )
+    )
+  ) %>% 
+  unnest(frag_df) %>% 
+  bind_cols(
+    read_tsv(
+      paste0(folder_alphapeptdeep,"output/output_fragdf_ms2_prediction.tsv")
+    )%>% 
+      select(b_z1:y_z2) %>% 
+      rename_with(
+        .fn = \(x) paste0(x,"_pred"),
+        .cols = everything()
+      )
+  ) %>% 
+  nest(
+    frag_df_pred = c(frag_index,ion_number,b_z1,b_z2,y_z1,y_z2,b_z1_pred,b_z2_pred,y_z1_pred,y_z2_pred)
+  ) -> result_prm_theospec_filtered_apdms2
+
+result_prm_theospec_filtered_apdms2 %>% 
+  arrange(
+    desc(PCC)
+  ) %>% 
+  distinct(Comment,.keep_all = TRUE) %>% 
+  write_tsv(
+    paste0("./export/",str_split_i(file_raw,"\\.",i=1),"_theospec_result_apdms2_summary.tsv")
+  )
+result_prm_theospec_filtered_apdms2 %>% 
+  write_tsv(
+    paste0("./export/",str_split_i(file_raw,"\\.",i=1),"_theospec_result_apdms2.tsv")
+  )
+
+result_prm_theospec_filtered_apdms2 %>% 
+  write_rds(
+    paste0("./export/",str_split_i(file_raw,"\\.",i=1),"_theospec_result_apdms2.rds")
+  )
+
+
+```  
+
+## Translation of MS Result:: Modify result to plotting + APD matching >> collective PRM data
+result_prm_theospec_filtered_apdms2 >> result_prm_theospec_filtered_apdms2_for_graph
+APD matching was done with frag >0, pred>0
+```{r}
+result_prm_theospec_filtered_apdms2 %>% 
+  mutate(
+    frag_df_pred = map(
+      frag_df_pred,
+      \(x) pivot_longer(x, cols = c(b_z1:y_z2_pred)) %>% 
+        mutate(prediction = if_else(str_detect(name,"pred"),"pred","frag")) %>% 
+        mutate(name = str_replace(name,"\\_pred","")) %>% 
+        rename(type = "name") %>% 
+        mutate(
+          bion_num = ion_number,
+          yion_num = max(ion_number)-ion_number+1
+        )
+    )
+  ) %>% #pull(frag_df_pred)
+  mutate(
+    frag_df_pred = map(
+      frag_df_pred,
+      \(x) pivot_wider(x, id_cols = c(frag_index,bion_num,yion_num,type),names_from = prediction) %>% 
+        mutate(
+          series = str_extract(type,"^."),
+          ion_num = as.integer(if_else(series == "b",bion_num,yion_num)),
+          charge = as.integer(str_extract(type,"(?<=\\_z)[0-9]"))
+        ) 
+    )
+  ) %>%
+  mutate(
+    peak_table_for_graph = map2(
+      peak_table_for_graph,
+      frag_df_pred,
+      \(x,y) left_join(x,y %>% select(series,ion_num,charge,frag,pred), join_by(series,ion_num,charge))
+    )
+  ) %>%
+  mutate(
+    peak_table_for_graph=map(
+      peak_table_for_graph,
+      \(x) mutate(x,ms2error = mz-ms2mz) %>% mutate(
+        ms2error_ppm = ms2error/mz*1e6
+      )
+    )
+  ) %>% ##now I need to create pred spec
+  mutate(
+    theo_spec=map(
+      theo_spec,
+      \(x) mutate(
+        x,
+        series = str_extract(ms2type,regex("[by]")),
+        ion_num = as.integer(str_extract(ms2type,regex("(?<=[by])[0-9]+"))),
+        charge = as.integer(str_extract(ms2type,regex("[1-2](?=\\+)")))
+      )
+    )
+  ) %>%
+  mutate(
+    theo_spec_preddf = map2(
+      theo_spec,
+      frag_df_pred,
+      \(x,y) left_join(x,y %>% select(series,ion_num,charge,pred),join_by(series,ion_num,charge)) %>% mutate(pred = -pred)
+    )
+  )%>%
+  mutate(
+    theo_spec_preddf = map(
+      theo_spec_preddf,
+      \(x) mutate(x, pred = na_if(pred,0))
+    ),
+    theo_spec_preddf = map(
+      theo_spec_preddf,
+      \(x) drop_na(x,pred)
+    )
+  )%>%
+  mutate(
+    peak_table_for_graph = map2(
+      peak_table_for_graph,
+      theo_spec_preddf,
+      \(x,y) mutate(
+        x, rel_int = int/max(int)
+      ) %>% select(
+        mz,rel_int,ms2type,ms2error,series
+      ) %>% 
+        bind_rows(
+          y %>% rename(mz = ms2mz,rel_int=pred) %>% select(mz,rel_int,ms2type,series)
+        )
+    )
+  ) %>% 
+  mutate(
+    apd_matching_count = map_int(
+      frag_df_pred,
+      \(x) filter(x,frag>0 & pred>0) %>% nrow()
+    )
+  ) -> result_prm_theospec_filtered_apdms2_for_graph
+  
+  result_prm_theospec_filtered_apdms2_for_graph %>% #head() %>% 
+    mutate(
+      peak_table_for_graph = map2(
+        peak_table_for_graph,
+        precursormz,
+        \(x,y) filter(x, mz<=(y/(1e6+5)*1e6) | mz>=(y/(1e6-5)*1e6)) %>% 
+          bind_rows(
+            filter(x, mz>=(y/(1e6+5)*1e6) & mz<=(y/(1e6-5)*1e6)) %>% mutate(
+              ms2type = "precursor",
+              ms2error = (mz-y),
+              series = "precursor"
+            )
+          )
+      )
+    ) -> result_prm_theospec_filtered_apdms2_for_graph
+  
+write_rds(
+  result_prm_theospec_filtered_apdms2_for_graph,
+  paste0("./export/",str_replace(file_raw,"\\.mzML",""),"4graph.rds")
+)
+
+result_prm_theospec_filtered_apdms2_for_graph %>% filter(
+  str_detect(gene_position,"PRTC")
+) %>% 
+  arrange(desc(PCC)) %>% 
+  distinct(gene_position,.keep_all = TRUE) %>% 
+  select(gene_position,PCC)
+
+
+
+result_prm_theospec_filtered_apdms2_for_graph %>% 
+  arrange(
+    desc(PCC)
+  ) %>% 
+  reframe(
+    .by = Comment,
+    sum_int = sum(sum_int)
+  ) %>% 
+  write_tsv(
+    paste0("./export/",str_split_i(file_raw,"\\.",i=1),"_theospec_result_apdms2_summary_intsum.tsv")
+  )
+```
+
+## Translation of MS Result:: Plotting MS2 spectrum figures
+result_prm_theospec_filtered_apdms2_for_graph >> result_prm_theospec_filtered_apdms2_for_graph2
+result_prm_theospec_filtered_apdms2_for_graph2>> figures
+```{r}
+result_prm_theospec_filtered_apdms2_for_graph %>% 
+    filter(PCC>0.6) %>% 
+    filter(!str_detect(gene_position,"PRTC")) %>% 
+    filter(apd_matching_count>3)-> result_prm_theospec_filtered_apdms2_for_graph2
+  ##figure testbed
+  
+  
+for (j in 1:nrow(result_prm_theospec_filtered_apdms2_for_graph2)){
+  result_prm_theospec_filtered_apdms2_for_graph2$spectrum[j] -> target_scan #1 >> j
+  
+  #target_scan <- 196241
+  result_prm_theospec_filtered_apdms2_for_graph2 %>% 
+    dplyr::filter(
+      spectrum == target_scan
+    ) -> spectrum_file_plot
+  
+  spectrum_file_plot %>% colnames()
+  colnames(spectrum_file_plot) 
+  
+  spectrum_file_plot$Comment -> title1
+  spectrum_file_plot$spectrum -> subtitle1 ##subtitle!
+  round(spectrum_file_plot$PCC,3) -> title2 ##pcc
+  as.double(spectrum_file_plot$precursormz)*as.double(spectrum_file_plot$charge) -> spec_plot_xmax
+  spectrum_file_plot$rt_observe_expect -> title3
+  spectrum_file_plot %>% select(peak_table_for_graph) %>%
+    unnest(cols=peak_table_for_graph) %>% 
+    ggplot( 
+      aes(x=mz,y=rel_int, label = ms2type)
+    )+
+    geom_bar(stat="identity",width = 0.2)+
+    geom_col(aes(fill = series),width = spec_plot_xmax/1000)+
+    geom_text(aes(y=if_else(rel_int<0,rel_int-0.08,rel_int),color= series),angle=90,hjust=-0.05,vjust=0,size=2, na.rm = TRUE)+
+    geom_hline(yintercept = 0, color = "black")+
+    scale_fill_manual(
+      values = c("b"=RColorBrewer::brewer.pal(n=9,"Set1")[2],"y"=RColorBrewer::brewer.pal(n=9,"Set1")[1],"precursor"=RColorBrewer::brewer.pal(n=9,"Set1")[3]),
+      na.value = NA
+    )+
+    scale_color_manual(
+      values = c("b"=RColorBrewer::brewer.pal(n=9,"Set1")[2],"y"=RColorBrewer::brewer.pal(n=9,"Set1")[1],"precursor"=RColorBrewer::brewer.pal(n=9,"Set1")[3]),
+      na.value = NA
+    )+
+    scale_x_continuous(limits=c(0, spec_plot_xmax),expand=c(0,0))+ #limits=c(250,800),
+    scale_y_continuous(breaks = c(1.0,0.5,0,-0.5,-1.0),labels = scales::percent(c(1,0.5,0,0.5,1)), limits=c(-1.2,1.2),expand=c(0,0))+
+    theme_classic()+
+    labs(x="m/z",y="Normalized Intensity", fill = "Ion Type", color = "Ion Type", title = paste0(title1), subtitle = paste0("PCC = ",title2,"  scan number: ",subtitle1,"  RT error = ",round(title3,2)))+
+    theme(
+      legend.position = "none",
+      plot.subtitle = element_text(size=10, color="black")
+    )->mirror_plot1
+  
+  
+  spectrum_file_plot %>% select(peak_table_for_graph) %>%
+    unnest(cols=peak_table_for_graph) %>% 
+    filter(!is.na(ms2error)) %>% 
+    ggplot(
+      aes(x=mz,y=ms2error,color = series)
+    )+
+    geom_point(size=1)+
+    geom_hline(yintercept = 0, color = "black")+
+    scale_color_manual(
+      values = c("b"=RColorBrewer::brewer.pal(n=9,"Set1")[2],"y"=RColorBrewer::brewer.pal(n=9,"Set1")[1],"precursor"=RColorBrewer::brewer.pal(n=9,"Set1")[3])
+    )+
+    scale_x_continuous(
+      limits=c(0, spec_plot_xmax),expand=c(0,0)
+    )+
+    scale_y_continuous(
+      limits = c(-0.01,0.01),
+      labels = \(x) x*1000
+    )+
+    labs(
+      y="Mass error (mDa)"
+    )+
+    theme_bw()+
+    theme(
+      legend.position = "none"
+    )->mirror_plot2
+  
+  ggarrange(
+    mirror_plot1,mirror_plot2,
+    ncol=1,
+    heights = c(2,1),
+    align = "v"
+  )
+  
+  ggsave(
+    paste0("./ms2figures/",file_raw,"/",str_replace(title1,"\\|","_"),"_",target_scan,".png"),
+    width=20, height = 12, units = "cm", dpi = 600,create.dir = TRUE
+  )
+}
+```
+
+## Analysis of translated PRM data:: reading result (export/*theospec_result_apdms2_summary.tsv)
+"./export/{240504_QE_15cm_PRM_G24_DRju_HeLa_48}(names here)_theospec_result_apdms2_summary.tsv"
+48 files to analyze
+
+result_for_analysis >> result_for_analysis_summary, result_for_analysis_summary_rt
+```{r}
+files_result <- dir("./export/",pattern = regex("HeLa\\_[0-9]+\\_theospec\\_result\\_apdms2\\_summary\\.tsv"))
+
+i=1
+read_tsv(
+  paste0("./export/",files_result[i])
+) %>% mutate(
+  exp = i
+)-> result_for_analysis
+
+for (i in 2:length(files_result)){
+  result_for_analysis %>% bind_rows(
+    read_tsv(
+      paste0("./export/",files_result[i])
+    ) %>% mutate(
+      exp = i,
+      mod_sites = as.character(mod_sites)
+    )
+  ) -> result_for_analysis
+}
+
+result_for_analysis %>% 
+  pivot_wider(
+    id_cols = c(gene_position,sequence),
+    names_from = exp,
+    values_from = PCC
+  )->result_for_analysis_summary
+
+result_for_analysis %>% 
+  pivot_wider(
+    id_cols = c(gene_position,sequence),
+    names_from = exp,
+    values_from = rt_observe_expect,
+  )->result_for_analysis_summary_rt
+```
+## Analysis of translated PRM data:: Figure, inclusion list RT histogram
+```{r}
+tibble(
+  time = seq(1,80,0.5)
+) %>% inner_join(
+  read_csv(
+    "D:/Rproject/PRM_UPR/inclusionlist/incl_G24_240410.csv"
+  ) %>% 
+    select(Comment,`Start [min]`,`End [min]`),
+  join_by(
+    between(x$time,y$`Start [min]`,y$`End [min]`)
+  )
+) %>% 
+  ggplot(
+    aes(x=time)
+  )+
+  geom_histogram(
+    binwidth = 0.25
+  )+
+  theme_bw()
+ggsave("./analysis/incl_time_window.png",width = 10,height =10, units = "cm",dpi = 600)
+```
+## Analysis of translated PRM data:: reading mzML data to quantify
+mzML + result_prm_theospec_filtered_apdms2_for_graph >> data_quan
+```{r}
+files_ms2 <- dir(path =  "F:/raws/2023ArgPRM/",pattern=regex("\\.mzML"))
+  
+  for (i in 1:length(files_ms2)){
+    files_ms2[i] -> file_raw
+    read_rds(
+      paste0("./export/",str_replace(file_raw,"\\.mzML",""),"4graph.rds")
+    ) -> result_prm_theospec_filtered_apdms2_for_graph
+    
+    if(i == 1){
+      result_prm_theospec_filtered_apdms2_for_graph %>% 
+        mutate(
+          file_num = i
+        ) -> data_quan
+    } else {
+      data_quan %>% 
+        bind_rows(
+          result_prm_theospec_filtered_apdms2_for_graph %>% 
+            mutate(
+              file_num = i
+            )
+        ) -> data_quan
+    }
+  }
+  
+  data_quan %>% 
+    write_rds(
+      "./export/data_quan.rds"
+    )
+```
+## Analysis of translated PRM data:: making data_quan_summary (apd_matching_count>=4)
+data_quan >> data_quan_summary
+detail_sites, detail_experiment
+```{r}
+read_rds(
+  "./export/data_quan.rds"
+) -> data_quan
+  
+read_rds(
+  "./export/sites.rds"
+) -> detail_sites
+
+detail_sites %>% 
+  bind_rows(
+    tibble(
+      Site = c("CPSF7|33","HSP90B1|24","LSM3|7"),
+      Type = c("apoptosis","apoptosis","Nucleus"),
+      Relation = c("-","+",NA),
+      Cleavage =  c("Caspase","SP","Caspase"),
+      Localization = c("Nucleus",NA,"Nucleus")
+    )
+  ) -> detail_sites
+
+detail_experiment <- tibble(
+  file_num = 1L:48L,
+  treathour = rep(c(0L,3L,6L,9L,12L,18L,24L,48L),1,each= 6),
+  treatment = rep(c("MOCK","MG132","MGTG"),8,each=2)
+)
+  
+data_quan %>% 
+  left_join(
+    detail_experiment,
+    join_by(file_num)
+  ) %>% 
+  mutate(
+    arg = if_else(str_detect(sequence,"^R"),TRUE,FALSE)
+  ) %>% 
+  left_join(
+    detail_sites,
+    join_by(
+      gene_position == Site
+    )
+  ) %>% 
+  mutate(
+    Type = if_else(str_detect(gene_position,"PRTC"),"PRTC",Type)
+  ) -> data_quan
+
+count_argument = 4 ## this 4 was i 
+
+data_quan %>% 
+  filter(
+    apd_matching_count >= count_argument
+  ) %>% 
+  reframe(
+    .by = c(file_num,gene_position,arg),
+    sum_int = sum(sum_int),
+    type = first(Type),
+    relation = first(Relation),
+    cleavage = first(Cleavage),
+    localization = first(Localization),
+    treatment = first(treatment),
+    treathour = first(treathour)
+    
+  ) %>% 
+  mutate(
+    treathour = paste0(treathour,"h"),
+    gene_position = str_replace(gene_position,"\\|","_"),
+    arg = if_else(arg == TRUE, "arg","free"),
+    key = paste0(gene_position,"_",arg)
+  ) %>%
+  mutate(
+    replicate = if_else(file_num %% 2 >0,"1","2"),
+    experiment = paste0(treatment,"_",treathour,"_",replicate)
+  ) -> data_quan_summary
+
+```
+# Analysis of translated PRM data:: CRMN normalizaion
+data_quan_summary >> data_assay, data_pheno, data_feature(PRTC)
+prm_eset = ExpressionSet for CRMN
+prm_eset+nfit = normed_crmn
+exprs(normed_crmn) = data_crmn
+data_crmn >> data_crmn_pivot >> +data_quan_summary >> data_quan_summary_figure_crmn
+
+```{r}
+data_quan_summary %>% 
+  pivot_wider(
+    id_cols = key,
+    names_from = experiment,
+    values_from = sum_int
+  ) %>% 
+  rowwise() %>% 
+  mutate(
+    min = min(c_across(MOCK_0h_1:MGTG_48h_2),na.rm=TRUE),
+    across(
+      MOCK_0h_1:MGTG_48h_2,
+      \(x) replace_na(x,min/2)
+    )
+  ) %>% 
+  select(-min) %>% 
+  column_to_rownames(var="key") %>% as.matrix() -> data_assay
+    
+data_quan_summary %>% 
+  select(experiment,treatment,treathour,replicate) %>% 
+  distinct(experiment,.keep_all = TRUE) %>% 
+  mutate(
+    across(treatment:replicate,\(x) factor(x))
+  ) %>% 
+  bind_cols(
+    tibble(runorder = factor(rep(1:8,each =6)))
+  ) %>% 
+  column_to_rownames(
+    var="experiment"
+  ) %>% as.data.frame()->data_pheno
+    
+data_quan_summary %>% 
+  select(key,arg,type,relation,cleavage,localization) %>% 
+  distinct(key,.keep_all = TRUE) %>% 
+  mutate(
+    tag = if_else(str_detect(type,"PRTC"),"IS","A"),
+    mark = if_else(str_detect(type,"PRTC"),"IS","Marked"),
+  ) %>% 
+  # cbind(
+  #   data.frame(RI = rep(1200,40))
+  # ) %>% 
+  column_to_rownames(
+    var="key"
+  )->data_feature
+    
+prm_eset <- ExpressionSet(
+  assayData = data_assay,
+  phenoData = as(data_pheno,"AnnotatedDataFrame"),
+  featureData = as(data_feature, "AnnotatedDataFrame")
+)
+package.version("crmn")
+nfit <- normFit(prm_eset, "crmn", factors=c("runorder"))
+sFit(nfit)$ncomp ##3
+slplot(sFit(nfit)$fit$pc, scol=as.integer(rep(1:8,each =6)))
+plot(nfit)
+# 
+# normed_nomis <- normPred(nfit, prm_eset, factors=c("runorder"))
+normed_crmn <- normPred(nfit, prm_eset, factors=c("runorder"))
+
+exprs(normed_crmn) %>% as_tibble(rownames = "key") -> data_crmn
+    
+data_crmn %>% 
+  pivot_longer(
+    cols = MOCK_0h_1:MGTG_48h_2,
+    names_to = "experiment",
+    values_to = "normalized_int"
+  ) -> data_crmn_pivot
+
+#data_nomis_pivot %>% 
+data_crmn_pivot %>% 
+  left_join(
+    data_quan_summary %>% select(key,type,relation,cleavage,localization,gene_position) %>% distinct(key,.keep_all =TRUE),
+    join_by(key==key)
+  ) -> data_quan_summary_figure_crmn
+    
+data_quan_summary_figure_crmn %>% 
+  mutate(
+    treatment = str_split_i(experiment,"_",1),
+    treathour = str_split_i(experiment,"_",2),
+    replicates = str_split_i(experiment,"_",3),
+    arg = if_else(str_detect(key,"arg"),"arg","free")
+  ) -> data_quan_summary_figure_crmn
+```
+# (Optional)Analysis of translated PRM data:: Figure APD matching count test 3 to 6 
+```{r}
+data_quan_summary_figure %>% 
+  drop_na(
+    normalized_int
+  ) %>% 
+  # mutate(
+  #   normalized_int = log(normalized_int)
+  # ) %>% 
+  group_by(key,treatment,treathour,arg,type,relation,cleavage,localization) %>% 
+  reframe(
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int),
+    gene_position = first(gene_position),
+    type = first(type)
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    key,arg
+  ) %>% 
+  mutate(
+    ratio_int = (mean_int-min(mean_int))/(max(mean_int)-min(mean_int)),
+    ratio_sd = ratio_int*(sd_int/mean_int)
+  ) %>% 
+  ggplot(
+    aes(x= fct(treathour,levels = c("0h","3h","6h","9h","12h","18h","24h","48h")),y= ratio_int,color=key)
+  )+
+  geom_point()+
+  geom_line(group=1)+
+  facet_grid(
+    rows = vars(type,gene_position),
+    cols = vars(treatment,arg)
+  )+
+  theme(
+    legend.position = "none"
+  )
+ggsave(
+  paste0("test",count_argument,".png"), width = 40, height = 80, units = "cm",limitsize = FALSE
+)
+
+data_quan_summary_figure %>% 
+  drop_na(
+    normalized_int
+  ) %>% 
+  mutate(
+    treathour_int = as.integer(str_extract(treathour,"^[0-9]+"))
+  ) %>% 
+  group_by(
+    gene_position,arg
+  ) %>% 
+  mutate(
+    normalized_int = log(normalized_int),
+    ratio_int = (normalized_int-min(normalized_int))/(max(normalized_int)-min(normalized_int))
+  ) %>% 
+  ggplot(
+    aes(x=treathour_int,y=ratio_int,fill=key)
+  )+
+  geom_point()+
+  stat_smooth(
+    method="glm", formula = y ~ x,se = TRUE,
+    method.args = list(family = gaussian(link="identity"))
+  )+
+  # geom_smooth(
+  #   method = "glm",formula = y ~ x,
+  #   method.args = list(family = gaussian(link = 'log')),
+  #   se = TRUE
+  # )+
+  # geom_smooth(method = "nls", se = FALSE,
+  #   formula = y ~ a * exp(r * x),
+  #   method.args = list(start = c(a = 1, r = 0.01))
+  #   )+
+  facet_grid(
+    rows = vars(type,gene_position),
+    cols = vars(treatment,arg)
+  )+
+  theme(
+    legend.position = "none"
+  )
+```
+
+# Analysis of translated PRM data:: final target, PCC analysis, remove targets having PCC less than 0.7071
+targets_final >> 32 sites out of 50 sites.
+```{r}
+data_quan %>% filter(
+  str_detect(gene_position,"PRTC")
+) %>% 
+  arrange(desc(PCC)) %>% 
+  distinct(gene_position,.keep_all = TRUE) %>% 
+  select(gene_position,PCC) ##least PCC is 0.7070996
+
+data_quan %>% 
+  filter(PCC > 0.707) %>% 
+  mutate(
+    gene_position = str_split_i(Comment,"_",i=1)
+  ) %>% 
+  mutate(
+    gene_position = str_replace(gene_position,regex("\\|"),"_")
+  ) %>%
+  mutate(
+    arg = if_else(str_detect(sequence,"^R"),"arg","free")
+  ) %>% 
+  mutate(
+    key = paste0(gene_position,"_",arg)
+  ) %>% 
+  filter(!str_detect(key,"PRTC")) %>% 
+  distinct(key) %>% pull(key) -> targets_pcc70
+
+
+
+data_quan_summary_figure_crmn2 %>% distinct(key) %>%  pull(key) -> targets_test
+
+
+table_arg_predicted %>% 
+  mutate(
+    passed = case_when(
+      target_type == "arg" & charge == 3 ~ TRUE,
+      target_type == "free" & charge == 2 ~ TRUE,
+      .default = FALSE
+    )
+  ) %>% 
+  filter(
+    (passed == TRUE & cleavage_type %in% c("SP","mTP")) |
+      (passed == TRUE & gene_position %in% vector_nucleus_arg)|
+      (passed == TRUE & str_detect(cleavage_type,"C14")) |
+      str_detect(gene_position,"PRTC")|
+      (passed == TRUE & gene_position %in% vector_upr_protein)
+  ) %>% 
+  mutate(
+    gene_position = str_replace(gene_position,regex("\\|"),"_")
+  ) %>% 
+  mutate(
+    arg = if_else(str_detect(sequence,"^R"),"arg","free")
+  ) %>% 
+  mutate(
+    key = paste0(gene_position,"_",arg)
+  ) %>% 
+  filter(!str_detect(key,"PRTC")) %>% 
+  distinct(key) %>% pull(key) -> targets_inclusionlist
+
+
+targets_inclusionlist ## 50 sites
+targets_inclusionlist[str_detect(targets_inclusionlist,"arg")] #21/50 arg
+targets_inclusionlist[str_detect(targets_inclusionlist,"free")] #29(6 UPR) free >> 23 free
+#"P4HA3_29_free","PLA2R1_21_free"were not partnered
+
+targets_test ##34 sites were quantified
+base::setdiff(targets_test,targets_pcc70) ## 2 of 34 sites were pcc cut
+base::intersect(targets_test,targets_pcc70) -> targets_final ##32 =  15 PRTC, 4 UPR, 15 arg, 13 free
+
+base::setdiff(targets_test,targets_inclusionlist) 
+
+```
+
+
+# Analysis of translated PRM data:: Comparing PRM quan data with diANN
+```{r}
+
+```
+

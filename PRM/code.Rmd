@@ -1,0 +1,496 @@
+---
+title: "CODE_figure"
+output: html_document
+date: "2024-10-29"
+---
+
+# Libraries
+```{r setup, include=FALSE}
+library(tidyverse)
+library(OrgMassSpecR)
+library(tidymodels)
+tidymodels_prefer()
+library(ggpubr)
+options(tibble.width = Inf)
+library(MSnbase)
+library(peakPantheR)
+conflicted::conflicts_prefer(dplyr::first)
+library(limma)
+library(crmn)
+```
+
+# Fig6:: boxplot_time_caspase
+```{r}
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  filter(
+    arg == "arg",
+    characteristics == "Caspase"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),
+      y=MGTG_MOCK,
+      fill = fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h"))
+    )
+  )+
+  geom_boxplot()+
+  # scale_fill_gradient2(
+  #   low = "blue",
+  #   mid = "white",
+  #   high = "red",
+  #   midpoint = 0,
+  #   na.value = "grey80"
+  # )+
+  scale_x_discrete(
+    label = c(
+      "0","3","6","12","18","24","48"
+    )
+  )+
+  labs(
+    x="Duration (hours)",
+    y=expression(Log[2](MGTG/MOCK)),
+    fill = ""
+  )+
+  lims(
+    y= c(-8.5,17.5)
+  )+
+  #facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+    "./figures/6_06_MGTG_caspase.png",height = 4.5, width =4.5,dpi = 600,units = "cm"
+  )
+
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  filter(
+    arg == "arg",
+    characteristics == "Caspase"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),
+      y=MG_MOCK,
+      fill = fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h"))
+    )
+  )+
+  geom_boxplot()+
+  # scale_fill_gradient2(
+  #   low = "blue",
+  #   mid = "white",
+  #   high = "red",
+  #   midpoint = 0,
+  #   na.value = "grey80"
+  # )+
+  scale_x_discrete(
+    label = c(
+      "0","3","6","12","18","24","48"
+    )
+  )+
+  labs(
+    x="Duration (hours)",
+    y=expression(Log[2](MG132/MOCK)),
+    fill = ""
+  )+
+  lims(
+    y= c(-8.5,17.5)
+  )+
+  #facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+    "./figures/6_06_MG_caspase.png",height = 4.5, width =4.5,dpi = 600,units = "cm"
+  )
+```
+
+# Fig6:: boxplot_time_signal
+```{r}
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  filter(
+    arg == "arg",
+    characteristics == "Signal"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),
+      y=MGTG_MOCK,
+      fill = fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h"))
+    )
+  )+
+  geom_boxplot()+
+  # scale_fill_gradient2(
+  #   low = "blue",
+  #   mid = "white",
+  #   high = "red",
+  #   midpoint = 0,
+  #   na.value = "grey80"
+  # )+
+  scale_x_discrete(
+    label = c(
+      "0","3","6","12","18","24","48"
+    )
+  )+
+  labs(
+    x="Duration (hours)",
+    y=expression(Log[2](MGTG/MOCK)),
+    fill = ""
+  )+
+  lims(
+    y= c(-8.5,17.5)
+  )+
+  #facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+    "./figures/6_06_MGTG_Signal.png",height = 4.5, width =4.5,dpi = 600,units = "cm"
+  )
+
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  filter(
+    arg == "arg",
+    characteristics == "Signal"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),
+      y=MG_MOCK,
+      fill = fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h"))
+    )
+  )+
+  geom_boxplot()+
+  # scale_fill_gradient2(
+  #   low = "blue",
+  #   mid = "white",
+  #   high = "red",
+  #   midpoint = 0,
+  #   na.value = "grey80"
+  # )+
+  scale_x_discrete(
+    label = c(
+      "0","3","6","12","18","24","48"
+    )
+  )+
+  labs(
+    x="Duration (hours)",
+    y=expression(Log[2](MG132/MOCK)),
+    fill = ""
+  )+
+  lims(
+    y= c(-8.5,17.5)
+  )+
+  #facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+    "./figures/6_06_MG_Signal.png",height = 4.5, width =4.5,dpi = 600,units = "cm"
+  )
+```
+# Fig6:: boxplot_time_Transit
+```{r}
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  filter(
+    arg == "arg",
+    characteristics == "Transit"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),
+      y=MGTG_MOCK,
+      fill = fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h"))
+    )
+  )+
+  geom_boxplot()+
+  # scale_fill_gradient2(
+  #   low = "blue",
+  #   mid = "white",
+  #   high = "red",
+  #   midpoint = 0,
+  #   na.value = "grey80"
+  # )+
+  scale_x_discrete(
+    label = c(
+      "0","3","6","12","18","24","48"
+    )
+  )+
+  labs(
+    x="Duration (hours)",
+    y=expression(Log[2](MGTG/MOCK)),
+    fill = ""
+  )+
+  lims(
+    y= c(-8.5,17.5)
+  )+
+  #facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+    "./figures/6_06_MGTG_Transit.png",height = 4.5, width =4.5,dpi = 600,units = "cm"
+  )
+
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  filter(
+    arg == "arg",
+    characteristics == "Transit"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),
+      y=MG_MOCK,
+      fill = fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h"))
+    )
+  )+
+  geom_boxplot()+
+  # scale_fill_gradient2(
+  #   low = "blue",
+  #   mid = "white",
+  #   high = "red",
+  #   midpoint = 0,
+  #   na.value = "grey80"
+  # )+
+  scale_x_discrete(
+    label = c(
+      "0","3","6","12","18","24","48"
+    )
+  )+
+  labs(
+    x="Duration (hours)",
+    y=expression(Log[2](MG132/MOCK)),
+    fill = ""
+  )+
+  lims(
+    y= c(-8.5,17.5)
+  )+
+  #facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+    "./figures/6_06_MG_Transit.png",height = 4.5, width =4.5,dpi = 600,units = "cm"
+  )
+```
