@@ -1,0 +1,91 @@
+---
+title: "SuppleData"
+output: html_document
+date: "2024-11-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Supplement Data 1
+# Supplement Data 2
+# Supplement Data 3
+```{r}
+write_tsv(
+  psm_17669,
+  "./export/psm_17669.tsv"
+)
+
+#this one is better
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_rtgvtest%>% 
+  write_tsv(
+    "D:/Rproject/ArginylomeDiscovery/export/summaryfile_psm_for_testing3_pcc_rt_hfsm2_rtgvtest.tsv"
+  )
+```
+
+# Supplement Data 4
+```{r}
+write_tsv(
+  psm_563516,
+  "D:/Rproject/ArginylomeDiscovery/export/psm_563516.tsv"
+)
+```
+# Supplement Data 5
+```{r}
+output_prediction_comparison_trypsin_241009 %>% 
+  write_tsv(
+    "D:/Rproject/ArginylomeDiscovery/export/fig2a.tsv"
+  )
+
+output_prediction_comparison_chymotrypsin %>% 
+  write_tsv(
+    "D:/Rproject/ArginylomeDiscovery/export/fig2a_chymo.tsv"
+  )
+```
+
+# Supplementary Data 6
+```{r}
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+  write_tsv(
+    "D:/Rproject/ArginylomeDiscovery/export/arginylome_validation_matrix3_sequence_distinct_trinity.tsv"
+  )
+```
+
+# Supplementary Data 7
+```{r}
+alphafold_fetched_tidied2 %>% 
+  write_tsv(
+    "D:/Rproject/ArginylomeDiscovery/export/alphafold_fetched_tidied2.tsv"
+  )
+pa_enriched_all %>% #reactome
+  mutate(
+    GeneRatio = paste0("_",GeneRatio)
+  ) %>% 
+  write_tsv(
+    "D:/Rproject/ArginylomeDiscovery/export/pa_enriched_all.tsv"
+  ) 
+
+gse_result_go %>% #gsea
+  write_tsv(
+    "D:/Rproject/ArginylomeDiscovery/export/gse_result_go.tsv"
+  )
+
+go_enriched_all %>%  ##go
+  mutate(
+    GeneRatio = paste0("_",GeneRatio)
+  ) %>% 
+  write_tsv(
+    "D:/Rproject/ArginylomeDiscovery/export/go_enriched_all.tsv"
+  )
+
+```
+# Supplementary Data 8
+```{r}
+
+peptide_lfq_trinity %>% 
+  write_tsv(
+    "D:/Rproject/ArginylomeDiscovery/export/peptide_lfq_trinity.tsv"
+  )
+```
+
