@@ -1,5 +1,23 @@
 # Nt-arginylationFiltering
 
+For discovery part, 
+Discovery/1Analysis_240711.R :: contains R codes for data read, transformation, figure generation.
+Discovery/2Figures.R :: contains R codes mainly additional figures.
+Discovery/Fig2A_modelcomparison_specific_codes.R :: contains codes for the generation of data and figures in Figure 2A
+Discovery/pcc_fdr2.R :: FDR estimation for MS2 prediction. Figure 2 and Supplmental figure 5
+
+For PRM part
+PRM/code_for_PRM_RUN.R :: contains creating QC data interpretation and creating inclusion lists
+PRM/code.Rmd :: contains figure generation.
+PRM/PRM.Rmd :: contains data analysis such as data transformation and normalization.
+
+For AlphaPeptDeep
+AlphaPeptDeep/Models: contains the models created in this study. generic is the pretrained model.
+AlphaPeptDeep/training_inputs: contains input data for finetuning
+AlphaPeptDeep/training_outputs : contains output data of finetuning using AlphaPeptDeep.
+
+
+
 code re-run was successful in the session:
 R version 4.5.0 (2025-04-11 ucrt)
 Platform: x86_64-w64-mingw32/x64
