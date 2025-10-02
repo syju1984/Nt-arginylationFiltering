@@ -1,4 +1,4 @@
-# Machine learning-based Filtering of Nt-arginylome and Machine learning-assisted PRM.
+# Machine Learning-based Filtering of Nt-arginylome and Corresponding PRM Algorithm for Validation.
 
 End-to-end pipeline for high-confidence identification and validation of **N-terminal arginylation (Nt-Arg)** from N-terminomics data.
 
