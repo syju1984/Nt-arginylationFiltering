@@ -1,5 +1,66 @@
 # Nt-arginylationFiltering
 
+End-to-end pipeline for high-confidence identification and validation of **N-terminal arginylation (Nt-Arg)** from N-terminomics data.
+
+The workflow implements a two-stage search, **MS2/RT transfer-learning–based rescoring**, and optional **PRM** validation with paired peptides (Nt-Arg vs unmodified). The repo includes RMarkdown notebooks that reproduce the main analyses and figures from the manuscript.
+
+[![GitHub](https://img.shields.io/badge/GitHub-syju1984%2FNt--arginylationFiltering-181717?logo=github)](https://github.com/syju1984/Nt-arginylationFiltering)
+![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
+![R ≥ 4.2](https://img.shields.io/badge/R-%E2%89%A5%204.2-blue)
+![Python ≥ 3.9](https://img.shields.io/badge/Python-%E2%89%A5%203.9-blue)
+
+> **Release:** `v1.0.0` (manuscript version) 
+---
+
+## Table of contents
+- [Overview](#overview)
+- [Install / requirements](#install--requirements)
+- [Core workflow](#core_workflow)
+- [Auxillary workflow](#aux_workflow)
+---
+
+## Overview
+
+- **Goal.** Improve specificity of Nt-Arg calls by adding **orthogonal evidence** (predicted MS2, run-calibrated RT, and a fragment **b–y mass-error** test) on top of standard search engines.
+- **Why.** Mass alone cannot disambiguate Nt-Arg from near-isobars (e.g., VG/GV/SA). Arg-starting tryptic artifacts can also pass FDR and leak into the candidate set.
+- **What you get.**
+  1) A rescored **high-confidence site list** (with thresholds/metrics).  
+  2) Optional **PRM** panels that quantify per target.
+
+---
+
+## Install / requirements
+
+- **OS:** Linux or macOS (Windows via WSL works)
+- **R ≥ 4.2**: `tidyverse`, `rmarkdown`, `ggplot2`, `ggpubr`, `rstatix`, `ggseqlogo`, `readxl`, `yaml`
+- **Python ≥ 3.9**: `pytorch`, `numpy`, `pandas`, `scikit-learn`, `pyyaml`
+- Optional: **FragPipe/MSFragger**, **Proteome Discoverer** (for initial searches), **Skyline** (for PRM)
+
+Create environments (examples):
+```bash
+# Python
+conda env create -f env/py_env.yaml
+conda activate ntarg-py
+
+# R (install packages)
+R -e "install.packages(c('tidyverse','rmarkdown','ggpubr','rstatix','ggseqlogo','readxl','yaml'))"
+
+---
+
+## Core workflow
+
+# For N-terminome Part:
+- Discovery/NterminomeAnalysis.Rmd :: outlined codes in Rmarkdown format with detailed explanation for data reading to data tranformation for ML-based filtering.
+- Discovery/figures_nterminome.Rmd :: outlined codes in Rmarkdown format with detailed explanation for figure generation in the paper (not yet published).
+
+# For PRM Part:
+- PRM/PRM_INCLUSIONLIST.Rmd :: outlined codes in Rmarkdown format with detailed explanation for algorithm to acquire inclusion list for the targets using ML-based prediction.
+- PRM/PRM_RESULT_TRNASLATION.Rmd :: outlined codes in Rmarkdown format with detailed explanation for algorithm to translate the PRM raw file using the inclusion list. This code includes theoretical and predicted spectra generation and matching.
+- PRM/PRM_figures.Rmd :: outlined codes in Rmarkdown format with detailed explanation for figure generation in the paper (not yet published).
+
+---
+## Auxillary workflow
+
 For discovery part, 
 Discovery/1Analysis_240711.R :: contains R codes for data read, transformation, figure generation.
 Discovery/2Figures.R :: contains R codes mainly additional figures.
