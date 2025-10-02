@@ -1,4 +1,4 @@
-# Nt-arginylationFiltering
+# ML-based Filtering of Nt-arginylome and ML-assisted PRM.
 
 End-to-end pipeline for high-confidence identification and validation of **N-terminal arginylation (Nt-Arg)** from N-terminomics data.
 
