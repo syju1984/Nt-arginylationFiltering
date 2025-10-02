@@ -1,0 +1,2174 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+#Libraries
+```{r}
+library(tidyverse)
+library(OrgMassSpecR)
+library(tidymodels)
+tidymodels_prefer()
+library(ggpubr)
+options(tibble.width = Inf)
+library(MSnbase)
+conflicted::conflicts_prefer(dplyr::first)
+library(limma)
+library(ggforce)
+library(crmn)
+```
+
+#Experiment Detail.tsv
+```{r}
+# file_num	treathour	treatment
+# 1	0	MOCK
+# 2	0	MOCK
+# 3	0	MG132
+# 4	0	MG132
+# 5	0	MGTG
+# 6	0	MGTG
+# 7	3	MOCK
+# 8	3	MOCK
+# 9	3	MG132
+# 10	3	MG132
+# 11	3	MGTG
+# 12	3	MGTG
+# 13	6	MOCK
+# 14	6	MOCK
+# 15	6	MG132
+# 16	6	MG132
+# 17	6	MGTG
+# 18	6	MGTG
+# 19	9	MOCK
+# 20	9	MOCK
+# 21	9	MG132
+# 22	9	MG132
+# 23	9	MGTG
+# 24	9	MGTG
+# 25	12	MOCK
+# 26	12	MOCK
+# 27	12	MG132
+# 28	12	MG132
+# 29	12	MGTG
+# 30	12	MGTG
+# 31	18	MOCK
+# 32	18	MOCK
+# 33	18	MG132
+# 34	18	MG132
+# 35	18	MGTG
+# 36	18	MGTG
+# 37	24	MOCK
+# 38	24	MOCK
+# 39	24	MG132
+# 40	24	MG132
+# 41	24	MGTG
+# 42	24	MGTG
+# 43	48	MOCK
+# 44	48	MOCK
+# 45	48	MG132
+# 46	48	MG132
+# 47	48	MGTG
+# 48	48	MGTG
+```
+
+#Site description table
+object: table_keys_for_prm
+```{r}
+table_library %>% 
+    write_tsv(
+      "./export/table_library.tsv"
+    )
+  
+  read_tsv(
+    "./export/table_library.tsv"
+  ) %>% 
+    distinct(gene_position,new_notation) -> table_keys_for_prm_revision
+  
+  table_keys_for_prm_revision %>% 
+    bind_rows(
+      table_keys_for_prm_revision %>% 
+        mutate(
+          gene_position = paste0("R-",gene_position),
+          new_notation = paste0("R-",new_notation)
+        )
+    ) -> table_keys_for_prm_revision
+  data_quan_summary_figure_crmn2 %>% distinct(key)
+  keys_prm
+  
+  tibble(
+    key = keys_prm,
+    key2 = str_replace(
+      key,"\\_(?=[0-9])","|"
+    ),
+    key3= case_when(
+      str_detect(key2, "free")~ str_replace(key2,"\\_free",""),
+      str_detect(key2, "arg")~ str_replace(key2,"\\_arg","") %>% paste0("R-",.)
+    ) 
+  ) %>% 
+    left_join(
+      table_keys_for_prm_revision,
+      join_by(
+        key3 == gene_position
+      )
+    )-> table_keys_for_prm
+```
+
+
+#Fig. 6b and Supplement Fig. 17a
+```{r}
+read_tsv(
+    paste0("E:/HELAQC/",folder_qc,"/combined_ion.tsv")
+  ) -> result_qc_ion
+  
+  result_qc_ion %>% #colnames()
+    mutate(
+      index = 1:nrow(.)
+    ) %>% 
+    rename(
+      rt = `1 Apex Retention Time` ## this is target col
+    ) %>% 
+    select(
+      `Peptide Sequence`,Charge,`Peptide Length`,index,rt, `Assigned Modifications`
+    ) %>% 
+    drop_na(
+      rt
+    ) %>% 
+    rename(
+      mods_original = `Assigned Modifications`,
+      sequence = `Peptide Sequence`,
+      charge = Charge,
+      nAA =  `Peptide Length`
+    ) %>% 
+    separate_longer_delim(
+      mods_original, ","
+    ) %>% #distinct(mods_original) %>% print(n=Inf)
+    mutate(
+      mods_res = case_when(
+        str_detect(mods_original,"N\\-")~"Any N-term",
+        .default = str_extract(mods_original,"(?<=[0-9])[AC-IK-Z]")
+      ),
+      mods_name = case_when(
+        str_extract(mods_original,"(?<=\\()[0-9\\.]+(?=\\))") == "15.9949" ~ "Oxidation",
+        str_extract(mods_original,"(?<=\\()[0-9\\.]+(?=\\))") == "57.0215" ~ "Carbamidomethyl",
+        str_extract(mods_original,"(?<=\\()[0-9\\.]+(?=\\))") == "42.0106" ~ "Acetyl",
+        .default = NA
+      )
+    ) %>% #drop_na(mods_original) %>%  view()
+    mutate(
+      mods = if_else(!is.na(mods_res),paste0(mods_name,"@",mods_res),NA),
+      mod_sites = case_when(
+        str_detect(mods_original,"N\\-")~0,
+        .default = as.integer(str_extract(mods_original,"^[0-9]+"))
+      )
+    ) %>% 
+    arrange(
+      index,mod_sites
+    ) %>% 
+    nest(
+      mod = mods_original:mod_sites
+    ) %>% 
+    mutate(
+      mods = map_chr(
+        mod, \(x) paste0(pull(x,mods),collapse = ";")
+      ),
+      mod_sites = map_chr(
+        mod, \(x) paste0(pull(x,mod_sites),collapse = ";")
+      )
+    ) -> table_qc_training
+  
+  #header: sequence, charge, spec_idx, irt, mods, mod_sites, nAA, rt_norm
+  #6 min system rt
+  #gradient start 10 to 65 >> 16 to 71
+  table_qc_training %>% 
+    rename(
+      irt = rt
+    ) %>% 
+    mutate(
+      irt = irt/60,
+      mods = na_if(mods, "NA"),
+      mod_sites = na_if(mod_sites, "NA"),
+      rt_norm = (irt-rt_start)/rt_duration
+    ) -> table_qc_training
+  
+  table_qc_training %>% 
+    mutate(
+      sequence = str_replace(sequence,"B$","K"),
+      sequence = str_replace(sequence,"J$","R")
+    ) -> table_qc_training
+
+table_qc_training %>% 
+  bind_cols(
+    read_tsv(
+      paste0(folder_alphapeptdeep,"output/training_rt_output.tsv")
+    ) %>% select(rt_pred)
+  ) %>% 
+  mutate(
+    irt_pred = rt_pred*rt_duration+rt_start
+  ) -> table_qc_training_output
+
+
+
+fit_rt_training <- lm(irt ~ irt_pred, data =table_qc_training_output)
+
+table_qc_training_output %>% 
+  bind_cols(
+    predict(fit_rt_training, interval = "prediction", level =0.95, newdata = table_qc_training_output)
+  ) -> table_qc_training_output_fit
+
+fit_rt_training %>% tidy()
+
+#t95
+table_qc_training_output_fit %>% 
+  mutate(t95=upr-lwr) %>% 
+  summarise(
+    t95_mean = mean(t95)
+  ) -> summary_rtprediction_t95
+
+##mae rsq rmse
+table_qc_training_output_fit %>% 
+  metrics(
+    truth = irt, estimate = irt_pred
+  ) -> summary_rtprediction
+
+table_qc_training_output_fit %>% 
+  ggplot(aes(x=irt, y=irt_pred))+
+  geom_point(size=0.5,alpha=0.5) +
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=1.2,
+    label=bquote(
+      ~Delta*italic(t)[95*'%'] == .(str_sub(paste0(summary_rtprediction_t95[1,1]),1,5))*","~R^2==.(summary_rtprediction %>% filter(.metric =="rsq") %>% pull(.estimate) %>% round(3))
+    ),size =4
+  )+
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=3.2,
+    label=bquote(
+      ~MAE==.(summary_rtprediction %>% filter(.metric =="mae") %>% pull(.estimate) %>% round(3))*","~N==.(table_qc_training_output %>% nrow())
+    ),size =4
+  )+
+  geom_line(aes(x=lwr), color = "red", linetype = "dashed")+
+  geom_line(aes(x=upr), color = "red", linetype = "dashed")+
+  geom_smooth(method=lm, se=TRUE)+
+  #lims(x=c(0,1),y=c(0,1))+
+  labs(
+    x="Observed RT (min)",
+    y="Predicted RT (min)"
+  )+
+  theme_classic2()+
+  theme(
+    axis.text = element_text(color = "black",size=10),
+    axis.title = element_text(color = "black",size=11)
+  )
+ggsave(
+  paste0("./figures/rt/rt_prediction_training_",project_name,".png"),width=10,height=10,dpi = 600,units="cm"
+)
+
+
+
+```
+
+
+
+#Fig. 6c
+```{r}
+dir(
+  "D:/Rproject/PRM_UPR/export/",
+  pattern = "240504\\_QE\\_15cm\\_PRM\\_G24\\_DRju\\_HeLa\\_[0-9]+\\_theospec\\_result\\_apdms2\\_summary\\.tsv",
+  full.names = TRUE
+) -> files_prm_summary
+  
+for (i in 1:length(files_prm_summary)){
+  if(i==1){
+    read_tsv(
+      files_prm_summary[i]
+    ) %>% mutate(
+      file = files_prm_summary[i]
+    ) -> summary_prm_data
+  } else {
+    summary_prm_data %>% 
+      bind_rows(
+        read_tsv(
+          files_prm_summary[i]
+        ) %>% mutate(
+          file = files_prm_summary[i]
+        )
+      ) -> summary_prm_data
+  }
+}
+
+summary_prm_data %>% 
+  filter(
+    #str_detect(Comment,"PRTC"),
+    !str_detect(Comment,"PRTC15")
+  ) %>% 
+  mutate(
+    type = fct(if_else(str_detect(Comment,"PRTC"),"ISTD","Analyte"),levels = c("ISTD","Analyte"))
+  ) %>% 
+  ggplot(
+    aes(x=type,y=rt_observe_expect,fill=type)
+  )+
+  geom_boxplot(
+    alpha = 0.2,
+  )+
+  geom_dotplot(
+    aes(color = type),
+    alpha = 0.4,
+    binaxis = "y", stackdir = "centerwhole",
+    stackratio = 0.4,
+    binwidth = 0.1,
+    dotsize = 1
+  )+
+  stat_summary(fun=mean, colour="darkred", geom="crossbar", linetype = "dashed", linewidth = 0.2) +
+  scale_x_discrete(
+    labels = c("ISTDs","Targets")
+  )+
+  labs(
+    y="Deviation from Expected RT [min]"
+  )+
+  theme_classic2()+
+  theme(
+    axis.text = element_text(color = "black",size= 7,hjust=0.5,vjust=0.5),
+    axis.title = element_text(color = "black",size= 7),
+    legend.position = "none",
+    axis.ticks = element_line(color = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  )
+ggsave(
+  paste0("./figures/rt_deviation all2.png"),
+  width = 4.5, height = 4.5, dpi=600, units = "cm"
+)
+  
+summary_prm_data %>% 
+  filter(
+    #str_detect(Comment,"PRTC"),
+    !str_detect(Comment,"PRTC15")
+  ) %>% 
+  mutate(
+    type = fct(if_else(str_detect(Comment,"PRTC"),"ISTD","Analyte"),levels = c("ISTD","Analyte"))
+  ) %>% 
+  write_tsv(
+    paste0("./figures/rt_deviation all2.tsv")
+  )
+```
+
+#Fig. 6d
+```{r}
+summary_prm_data %>% 
+  mutate(
+    file_num = str_extract(file,"(?<=HeLa\\_)[0-9]+") %>% as.integer()
+  ) %>% left_join(
+    experiment_detail,
+    join_by(
+      file_num
+    )
+  ) -> summary_prm_data
+
+summary_prm_data %>% 
+    filter(
+      #str_detect(Comment,"PRTC"),
+      !str_detect(Comment,"PRTC15")
+    ) %>% 
+    summarize(
+      .by = Comment,
+      PCC = max(PCC)
+    ) %>% 
+    mutate(
+      type = fct(if_else(str_detect(Comment,"PRTC"),"ISTD","Analyte"),levels = c("ISTD","Analyte"))
+    ) %>% 
+    ggplot(
+      aes(x=type,y=PCC,fill=type)
+    )+
+    geom_boxplot(
+      alpha = 0.2,
+    )+
+    stat_compare_means(
+      comparisons = list(c("ISTD","Analyte")),
+      method = "t.test",
+      method.args = list(var.equal = TRUE),
+      label.y = 1,
+      size = 2
+    )+
+    scale_x_discrete(
+      labels = c("ISTDs","Targets")
+    )+
+    # geom_dotplot(
+    #   aes(color = type),
+    #   alpha = 0.4,
+    #   binaxis = "y", stackdir = "centerwhole",
+    #   stackratio = 0.4,
+    #   binwidth = 0.01,
+    #   dotsize = 0.1
+    # )+
+    labs(
+      y="Deviation from Expected RT [min]"
+    )+
+    # lims(
+    #   y= c(0,1.2)
+    # )+
+    scale_y_continuous(
+      limits = c(0,1.1),
+      breaks = seq(0,1, by=0.25)
+    )+
+    theme_classic2()+
+    theme(
+      axis.text = element_text(color = "black",size= 7,hjust=0.5,vjust=0.5),
+      axis.title = element_text(color = "black",size= 7),
+      legend.position = "none",
+      axis.ticks = element_line(color = "black"),
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank()
+    )
+  ggsave(
+    paste0("./figures/ms2_deviation all2.png"),
+    width = 4.5, height = 4.5, dpi=600, units = "cm"
+  )
+  
+  summary_prm_data %>% 
+    filter(
+      #str_detect(Comment,"PRTC"),
+      !str_detect(Comment,"PRTC15")
+    ) %>% 
+    summarize(
+      .by = Comment,
+      PCC = max(PCC)
+    ) %>% 
+    mutate(
+      type = fct(if_else(str_detect(Comment,"PRTC"),"ISTD","Analyte"),levels = c("ISTD","Analyte"))
+    ) %>%
+    write_tsv(
+      paste0("./figures/ms2_deviation all2.tsv")
+```
+
+#Fig. 6e,f,Supple 24.
+```{r}
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  filter(
+    arg == "arg"
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  filter(
+    arg == "arg"
+  ) %T>%
+  write_tsv(
+    "./export/sourcedata/6_06_MGTG_all.tsv"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),
+      y=MGTG_MOCK,
+      fill = fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h"))
+    )
+  )+
+  geom_boxplot()+
+  # scale_fill_gradient2(
+  #   low = "blue",
+  #   mid = "white",
+  #   high = "red",
+  #   midpoint = 0,
+  #   na.value = "grey80"
+  # )+
+  stat_compare_means(
+    comparisons = list(
+      c("6h","12h"),
+      c("12h","18h"),
+      c("12h","24h")
+    ),
+    method = "t.test",
+    method.args = list(var.equal = TRUE),
+    label.y = c(11,13.5,16),
+    size = 2
+  )+
+  scale_x_discrete(
+    label = c(
+      "0","3","6","12","18","24","48"
+    )
+  )+
+  labs(
+    x="Duration (h)",
+    y=expression(Log[2](MGTG/MOCK)),
+    fill = ""
+  )+
+  lims(
+    y= c(-8.5,17.5)
+  )+
+  #facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/6_06_MGTG_all.png",height = 4.5, width =4.5,dpi = 600,units = "cm"
+)
+
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  filter(
+    arg == "arg"
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  filter(
+    arg == "arg"
+  ) %T>%
+  write_tsv(
+    "./export/sourcedata/6_06_MG132_all.tsv"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),
+      y=MG_MOCK,
+      fill = fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h"))
+    )
+  )+
+  geom_boxplot()+
+  # scale_fill_gradient2(
+  #   low = "blue",
+  #   mid = "white",
+  #   high = "red",
+  #   midpoint = 0,
+  #   na.value = "grey80"
+  # )+
+  stat_compare_means(
+    comparisons = list(
+      c("6h","12h"),
+      c("12h","18h"),
+      c("12h","24h")
+    ),
+    method = "t.test",
+    method.args = list(var.equal = TRUE),
+    label.y = c(11,13.5,16),
+    size = 2
+  )+
+  scale_x_discrete(
+    label = c(
+      "0","3","6","12","18","24","48"
+    )
+  )+
+  labs(
+    x="Duration (h)",
+    y=expression(Log[2](MG132/MOCK)),
+    fill = ""
+  )+
+  lims(
+    y= c(-8.5,17.5)
+  )+
+  #facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/6_06_MG132_all.png",height = 4.5, width =4.5,dpi = 600,units = "cm"
+)
+
+ #################################
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  filter(
+    arg == "free",
+    characteristics != "UPR"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),
+      y=MGTG_MOCK,
+      fill = fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h"))
+    )
+  )+
+  geom_boxplot()+
+  # scale_fill_gradient2(
+  #   low = "blue",
+  #   mid = "white",
+  #   high = "red",
+  #   midpoint = 0,
+  #   na.value = "grey80"
+  # )+
+  scale_x_discrete(
+    label = c(
+      "0","3","6","12","18","24","48"
+    )
+  )+
+  labs(
+    x="Duration (h)",
+    y=expression(Log[2](MGTG/MOCK)),
+    fill = ""
+  )+
+  stat_compare_means(
+    comparisons = list(
+      c("6h","12h"),
+      c("12h","18h"),
+      c("12h","24h")
+    ),
+    method = "t.test",
+    method.args = list(var.equal = TRUE),
+    label.y = c(11,13.5,16),
+    size = 2
+  )+
+  lims(
+    y= c(-8.5,17.5)
+  )+
+  #facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/6_06_MGTG_free.png",height = 4.5, width =4.5,dpi = 600,units = "cm"
+)
+
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  filter(
+    arg == "free",
+    characteristics != "UPR"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),
+      y=MG_MOCK,
+      fill = fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h"))
+    )
+  )+
+  geom_boxplot()+
+  # scale_fill_gradient2(
+  #   low = "blue",
+  #   mid = "white",
+  #   high = "red",
+  #   midpoint = 0,
+  #   na.value = "grey80"
+  # )+
+  scale_x_discrete(
+    label = c(
+      "0","3","6","12","18","24","48"
+    )
+  )+
+  labs(
+    x="Duration (h)",
+    y=expression(Log[2](MG132/MOCK)),
+    fill = ""
+  )+
+  stat_compare_means(
+    comparisons = list(
+      c("6h","12h"),
+      c("12h","18h"),
+      c("12h","24h")
+    ),
+    method = "t.test",
+    method.args = list(var.equal = TRUE),
+    label.y = c(11,13.5,16),
+    size = 2
+  )+
+  lims(
+    y= c(-8.5,17.5)
+  )+
+  #facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/6_06_MG132_free.png",height = 4.5, width =4.5,dpi = 600,units = "cm"
+)
+```
+
+
+#Fig. 6g-i and l-n Supple 23-24
+```{r}
+data_quan_summary_figure_crmn2 %>% distinct(key)
+keys_prm
+
+tibble(
+  key = keys_prm,
+  key2 = str_replace(
+    key,"\\_(?=[0-9])","|"
+  ),
+  key3= case_when(
+    str_detect(key2, "free")~ str_replace(key2,"\\_free",""),
+    str_detect(key2, "arg")~ str_replace(key2,"\\_arg","") %>% paste0("R-",.)
+  )
+) -> table_keys_for_prm
+  
+  
+for (i in 1:length(keys_prm)){
+  data_quan_summary_figure_crmn2 %>% 
+    ungroup() %>% 
+    filter(
+      str_detect(key,keys_prm[i]) &
+      !str_detect(treathour,"9h")
+    ) %>% 
+    mutate(
+      treathour = str_extract(treathour,"[0-9]+") %>% as.integer(),
+      treatment = fct(treatment,levels = c("MOCK","MG132","MGTG")),
+      int_log = log(normalized_int)
+    ) %>% 
+    summarize(
+      .by = c(treatment,treathour),
+      rel_int_mean = mean(int_log),
+      sd = sd(int_log)
+    ) %>% 
+    ggplot(
+      aes(
+        x=treathour,y=rel_int_mean,color = treatment
+      )
+    )+
+    geom_point()+
+    geom_errorbar(
+      aes(
+        ymin = rel_int_mean-sd, ymax=rel_int_mean+sd
+      )
+    )+
+    geom_line(
+      aes(color = treatment),
+      # stat = "smooth",
+      # method = "loess",
+      alpha = 0.2,
+      #color = RColorBrewer::brewer.pal(3,"Set1")[2]
+    )+
+    scale_color_manual(
+      values = RColorBrewer::brewer.pal(3,"Set1")
+    )+
+    labs(
+      x="Treatment Duration (h)",
+      y= expression(Log[10](Normalized~Intensity)),
+      title = table_keys_for_prm$key3[i]
+    )+
+    theme_classic2()+
+    theme(
+      axis.text = element_text(color = "black",size= 7),
+      axis.title = element_text(color = "black",size= 7),
+      plot.title = element_text(color = "black",size= 8),
+      legend.position = "none",
+      axis.ticks = element_line(color = "black"),
+      #axis.title = element_blank()
+    )
+  ggsave(paste0("./figures/ind/",keys_prm[i],".png"),height = 5, width =8,dpi = 600,units = "cm")
+}
+
+```
+
+
+
+#Fig. 6p
+```{r}
+
+mito_targets <- c(
+  "SSBP1|17_RESETTTSLVLER_4",
+  "MTHFD2|36_REAVVISGR_2",
+  "UQCRHL|15_RDPEEEEEEEEELVDPLTTVR_4"
+)
+
+data_quan_summary_figure_crmn %>% 
+  filter(
+    key %in% c(
+      "SSBP1|17_RESETTTSLVLER_4",
+      "SSBP1|17_ESETTTSLVLER_3",
+      "MTHFD2|36_REAVVISGR_2",
+      "MTHFD2|36_EAVVISGR_2",
+      "UQCRHL|15_DPEEEEEEEEELVDPLTTVR_3",
+      "UQCRHL|15_RDPEEEEEEEEELVDPLTTVR_4"
+    )
+  ) %>% 
+  mutate(
+    experiment2 = paste(shate1,treatment,fraction,sep="_"),
+    experiment2 =fct(
+      experiment2,
+      levels = c(
+        "WT_MOCK_cyto",
+        "WT_MGTG_cyto",
+        "shATE1_MOCK_cyto",
+        "shATE1_MGTG_cyto",
+        "WT_MOCK_mito",
+        "WT_MGTG_mito",
+        "shATE1_MOCK_mito",
+        "shATE1_MGTG_mito"
+      )
+    )
+  ) %>% 
+  mutate(
+    sequence = str_split_i(key,pattern = "_",2),
+    arg = if_else(str_detect(sequence,"^R"),"arg","free"),
+    site = str_split_i(key,pattern = "_",1)
+  ) %>% 
+  group_by(arg,site,fraction) %>% 
+  mutate(
+    ref = ifelse(
+      any(arg=="free"),
+      median(normalized_int[arg=="free"]),
+      median(normalized_int)
+    )
+  ) %>% 
+  mutate(
+    normalized_int_ref_dev = log(normalized_int/ref,2)
+  ) %>% 
+  filter(
+    arg != "free"
+  )
+  write_tsv(
+    "./figures/fig6q.tsv"
+  )
+
+for (i in 1:3){
+data_quan_summary_figure_crmn %>%
+  filter(
+    key %in% c(
+      "SSBP1|17_RESETTTSLVLER_4",
+      "SSBP1|17_ESETTTSLVLER_3",
+      "MTHFD2|36_REAVVISGR_2",
+      "MTHFD2|36_EAVVISGR_2",
+      "UQCRHL|15_DPEEEEEEEEELVDPLTTVR_3",
+      "UQCRHL|15_RDPEEEEEEEEELVDPLTTVR_4"
+    )
+  ) %>% 
+  mutate(
+    experiment2 = paste(shate1,treatment,fraction,sep="_"),
+    experiment2 =fct(
+      experiment2,
+      levels = c(
+        "WT_MOCK_cyto",
+        "WT_MGTG_cyto",
+        "shATE1_MOCK_cyto",
+        "shATE1_MGTG_cyto",
+        "WT_MOCK_mito",
+        "WT_MGTG_mito",
+        "shATE1_MOCK_mito",
+        "shATE1_MGTG_mito"
+      )
+    )
+  ) %>% 
+  mutate(
+    sequence = str_split_i(key,pattern = "_",2),
+    arg = if_else(str_detect(sequence,"^R"),"arg","free"),
+    site = str_split_i(key,pattern = "_",1)
+  ) %>% 
+  group_by(arg,site,fraction) %>% 
+  mutate(
+    ref = ifelse(
+      any(arg=="free"),
+      median(normalized_int[arg=="free"]),
+      median(normalized_int)
+    )
+  ) %>% 
+  mutate(
+    normalized_int_ref_dev = log(normalized_int/ref,2)
+  ) %>% 
+    filter(
+      arg != "free"
+    ) %>% 
+  filter(key == mito_targets[i]) %T>% 
+    write_tsv(
+      paste0("./export/natcomm_revision/shate1_figure/fig6q_",i,"_cyto.tsv")
+    ) %>% 
+  ggplot(
+    aes(x=experiment2,y=normalized_int_ref_dev)
+  )+
+  geom_boxplot(
+    aes(fill = experiment2),
+    linewidth = 0.2
+  )+
+  scale_fill_manual(
+    values = c(
+      "WT_MOCK_cyto"="#984EA3",
+      "WT_MGTG_cyto"="#E41A1C",
+      "shATE1_MOCK_cyto" = "#377EB8",
+      "shATE1_MGTG_cyto" = "#4DAF4A",
+      "WT_MOCK_mito"="#984EA3",
+      "WT_MGTG_mito"="#E41A1C",
+      "shATE1_MOCK_mito" = "#377EB8",
+      "shATE1_MGTG_mito" = "#4DAF4A"
+    )
+  )+
+  scale_x_discrete(
+    labels = c(
+      "WT_MOCK_cyto"="MOCK",
+      "WT_MGTG_cyto"="MGTG",
+      "shATE1_MOCK_cyto" = "shATE1",
+      "shATE1_MGTG_cyto" = "shATE1+MGTG",
+      "WT_MOCK_mito"="MOCK",
+      "WT_MGTG_mito"="MGTG",
+      "shATE1_MOCK_mito" = "shATE1",
+      "shATE1_MGTG_mito" = "shATE1+MGTG"
+    )
+  )+
+  # facet_wrap(
+  #   facets = vars(fraction),
+  #   scales = "free_x",
+  #   labeller = labeller(
+  #     fraction = c(
+  #       "cyto" = "Cytosol",
+  #       "mito" = "Mitochondria"
+  #     )
+  #   )
+  # )+
+  labs(
+    x = "Treatments"
+  )+
+  stat_compare_means(
+    comparisons = list(
+      c("WT_MGTG_cyto","WT_MOCK_cyto"),
+      c("WT_MGTG_cyto","shATE1_MOCK_cyto"),
+      c("WT_MGTG_cyto","shATE1_MGTG_cyto"),
+      c("WT_MGTG_mito","WT_MOCK_mito"),
+      c("WT_MGTG_mito","shATE1_MOCK_mito"),
+      c("WT_MGTG_mito","shATE1_MGTG_mito")
+    ),
+    method = "t.test",
+    method.args = list(var.equal = TRUE),
+    size = 1.4,
+    bracket.size = 0.2,
+    label = "p.signif"
+  )+
+  theme_pubr()+
+    theme(
+      legend.position = "none",
+      text = element_text(size=6),
+      axis.text.x = element_text(angle = 30,hjust =1),
+      axis.title = element_blank(),
+      axis.line = element_line(linewidth = 0.2),
+      axis.ticks = element_line(linewidth = 0.2)
+    )
+
+ggsave(
+  paste0("./figures/natcomm_revision/shate1_figure/fig6q_",i,".png"),
+  width = 4.5,
+  height = 3.75,
+  units = "cm",
+  dpi = 600
+)
+}
+```
+
+#Supplment Fig. 16
+
+##a
+```{r}
+table_qc_training %>% 
+  bind_cols(
+    read_tsv(
+      paste0(folder_alphapeptdeep,"output/training_rt_output.tsv")
+    ) %>% select(rt_pred)
+  ) %>% 
+  mutate(
+    irt_pred = rt_pred*rt_duration+rt_start
+  ) -> table_qc_training_output
+
+
+
+fit_rt_training <- lm(irt ~ irt_pred, data =table_qc_training_output)
+
+table_qc_training_output %>% 
+  bind_cols(
+    predict(fit_rt_training, interval = "prediction", level =0.95, newdata = table_qc_training_output)
+  ) -> table_qc_training_output_fit
+
+fit_rt_training %>% tidy()
+
+#t95
+table_qc_training_output_fit %>% 
+  mutate(t95=upr-lwr) %>% 
+  summarise(
+    t95_mean = mean(t95)
+  ) -> summary_rtprediction_t95
+
+##mae rsq rmse
+table_qc_training_output_fit %>% 
+  metrics(
+    truth = irt, estimate = irt_pred
+  ) -> summary_rtprediction
+
+## For sfig 16a
+table_qc_training_output_fit %>% 
+  filter(
+    str_detect(sequence,"^R")
+  ) -> data_rt_plot
+
+data_rt_plot %>% 
+  ggplot(aes(x=irt, y=irt_pred))+
+  geom_point(size=0.5,alpha=0.5) +
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=1.2,
+    label=bquote(
+      ~Delta*italic(t)[95*'%'] == .(str_sub(paste0(summary_rtprediction_t95[1,1]),1,5))*","~R^2==.(summary_rtprediction %>% filter(.metric =="rsq") %>% pull(.estimate) %>% round(3))
+    ),size =4
+  )+
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=3.2,
+    label=bquote(
+      ~MAE==.(summary_rtprediction %>% filter(.metric =="mae") %>% pull(.estimate) %>% round(3))*","~N==.(data_rt_plot %>% nrow())
+    ),size =4
+  )+
+  geom_line(aes(x=lwr), color = "red", linetype = "dashed")+
+  geom_line(aes(x=upr), color = "red", linetype = "dashed")+
+  #geom_smooth(method=lm, se=TRUE)+
+  #lims(x=c(0,1),y=c(0,1))+
+  labs(
+    x="Observed RT (min)",
+    y="Predicted RT (min)"
+  )+
+  theme_classic2()+
+  theme(
+    axis.text = element_text(color = "black",size=10),
+    axis.title = element_text(color = "black",size=11)
+  )
+ggsave(
+  paste0("./figures/rt/rt_prediction_training_arg_",project_name,".png"),width=10,height=10,dpi = 600,units="cm"
+)
+```
+
+
+##b
+```{r}
+table_training_result_all %>% 
+  filter(
+    str_detect(sequence,"^R")
+  ) %>% 
+  summarize(
+    .by = grad,
+    count = n(),
+    mean = mean(rt_pred)*100,
+    sd = sd(rt_pred)*100
+  ) %>% write_tsv(
+    "./figures/sfig16b.tsv"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(grad,levels =c("G24","G28","G32","G36","G40")),
+      y=mean
+    )
+  )+
+  annotate(
+    "text",
+    x=1:5,
+    y=70,
+    label = c("N=224","N=198","N=210","N=214","N=184")
+  )+
+  geom_bar(
+    stat="identity"
+  )+
+  geom_errorbar(
+    aes(ymin = mean-sd,ymax=mean+sd),
+    width = 0.2
+  )+
+  labs(
+    y="PSM counts for R-starting peptides",
+    x="Gradients"
+  )+
+  scale_x_discrete(
+    labels=c("24%B","28%B","32%B","36%B","40%B")
+  )+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 10),
+    axis.text.y =element_text(color = "black",size= 10),
+    axis.title = element_text(color = "black",size= 10),
+    plot.title = element_text(color = "black",size= 10),
+    legend.position = "none",
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 10),
+    legend.text = element_text(color = "black",size= 10)
+  )
+ggsave(
+  "./figures/rstarting_grad_counts.png",height = 10, width =10,dpi = 600,units = "cm"
+)
+```
+
+##c
+```{r}
+table_training_result_all %>% 
+  filter(
+    str_detect(sequence,"^R")
+  ) %>% 
+  distinct(
+    sequence,.keep_all = TRUE
+  ) %T>% 
+  write_tsv(
+    "./figures/s16c.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=grad,y=rt_pred)
+  )+
+  stat_density(
+    aes(fill = after_stat(count)),
+    geom = "raster",
+    position = "identity"
+  )+
+  scale_fill_distiller(palette = "Spectral", direction = -1)+
+  scale_x_discrete(
+    labels=c("24%B","28%B","32%B","36%B","40%B")
+  )+
+  labs(
+    x="Gradients",y="Normalized RT",
+    fill = "Counts"
+  )+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 10),
+    axis.text.y =element_text(color = "black",size= 10),
+    axis.title = element_text(color = "black",size= 10),
+    plot.title = element_text(color = "black",size= 10),
+    #legend.position = "none",
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 10),
+    legend.text = element_text(color = "black",size= 10)
+  )
+ggsave(
+  "./figures/density_rt_rstarting.png",height = 10, width =10,dpi = 600,units = "cm"
+)
+
+```
+
+##d
+```{r}
+table_arg_predicted_all %>% 
+  pivot_longer(
+    irt_pred_g40:irt_pred_g24
+  ) %>% 
+  distinct(
+    sequence,name,.keep_all = TRUE
+  ) %>% 
+  ggplot(
+    aes(x=name,y=value)
+  )+
+  stat_density(
+    aes(fill = after_stat(count)),
+    geom = "raster",
+    position = "identity"
+  )+
+  scale_fill_distiller(palette = "Spectral", direction = -1)+
+  scale_x_discrete(
+    labels=c("G24","G28","G32","G36","G40")
+  )+
+  labs(
+    x="Gradients",y="Predicted Retention Time (Min)"
+  )+
+  theme_bw()+
+  theme(
+    axis.text = element_text(color = "black")
+  )
+ggsave(
+  paste0("./figures/rt/rt_prediction_training_all_desnity.png"),width=15,height=10,dpi = 600,units="cm"
+)
+```
+
+#Supplement Fig. 17b
+```{r}
+read_tsv(
+    "C:/Users/admin/alphapeptdeep/project/alphapeptdeep_115/alphapeptdeep/export/output/ms2_prediction_output_metrics_pretrained_model_trypsin_training_result.tsv"
+  ) %>% 
+    mutate(
+      model = "pretrained"
+    ) %>% 
+    bind_rows(
+      read_tsv(
+        "C:/Users/admin/alphapeptdeep/project/alphapeptdeep_115/alphapeptdeep/export/output/ms2_prediction_output_metrics_finetuned_model_trypsin_training_result.tsv"
+      ) %>% 
+        mutate(
+          model = "finetuned"
+        )
+    ) -> data_ms2_prediction_comparison
+
+data_ms2_prediction_comparison %>% 
+  write_tsv(
+    "./figures/s17b.tsv"
+  )
+  
+data_ms2_prediction_comparison %>% 
+  mutate(
+    model = fct(model, levels =c("pretrained","finetuned"))
+  ) %>% 
+  ggplot(
+    aes(x = model, y = PCC, fill = model)
+  )+
+  geom_violin(
+    
+  )+
+  geom_boxplot(
+    width = 0.05
+  )+
+  stat_compare_means(
+    comparisons = list(c("pretrained","finetuned")),
+    method = "t.test",
+    method.args = list(var.equal = TRUE),
+    #label.y = 1,
+    size = 3
+  )+
+  scale_y_continuous(
+    limits = c(0.75,1.1),
+    breaks = seq(0,1, by=0.25)
+  )+
+  labs(
+    y="Pearson's Correlation Coefficieint"
+  )+
+  theme_classic2()+
+  theme(
+    axis.text = element_text(color = "black",size= 7,hjust=0.5,vjust=0.5),
+    axis.title = element_text(color = "black",size= 7),
+    legend.position = "none",
+    axis.ticks = element_line(color = "black"),
+    axis.title.x = element_blank(),
+    #axis.title.y = element_blank()
+  )
+ggsave(
+  paste0("./figures/MS2model_comparison2.png"),
+  width = 10, height = 10, dpi=600, units = "cm"
+)
+```
+#Supplement Fig. 18
+##a: injection time
+```{r}
+read_tsv(
+  "./export/240409_QE_15cm_PRM_G24_DRju_HeLa_MGTG_incl240408_it200fix200_theospec_result_apdms2_summary.tsv"
+) %>% 
+  mutate(
+    exp = "it200"
+  ) %>% 
+  bind_rows(
+    read_tsv(
+      "./export/240409_QE_15cm_PRM_G24_DRju_HeLa_MGTG_incl240408_it500fix200_theospec_result_apdms2_summary.tsv"
+    )%>% 
+      mutate(
+        exp = "it500"
+      )
+  ) %>% 
+  bind_rows(
+    read_tsv(
+      "./export/240409_QE_15cm_PRM_G24_DRju_HeLa_MGTG_incl240408_it1000fix200_theospec_result_apdms2_summary.tsv"
+    )%>% 
+      mutate(
+        exp = "it1000"
+      )
+  ) -> result_for_analysis_it_optimization
+
+result_for_analysis_it_optimization %>% 
+  pivot_wider(
+    id_cols = c(gene_position,sequence),
+    names_from = exp,
+    values_from = PCC
+  ) %>% 
+  mutate(
+    type = case_when(
+      str_detect(gene_position,"PRTC") ~ "PRTC",
+      str_detect(sequence,"^R") ~ "Arg",
+      gene_position %in% vector_upr_protein ~ "UPR",
+      .default = "free"
+    )
+  )->result_for_analysis_summary_it_optimization
+
+result_for_analysis_summary_it_optimization %>% 
+  write_tsv(
+    ""
+  )
+
+result_for_analysis_summary_it_optimization %>% 
+  pivot_longer(
+    it200:it1000
+  ) %>% 
+  
+filter(value >0.707) %T>% 
+  write_tsv(
+    "./figures/supple_it.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=fct(name,levels=c("it200","it500","it1000")),y=value,fill=fct(name,levels=c("it200","it500","it1000")))
+  )+
+  geom_boxplot()+
+  scale_x_discrete(
+    label = c("200","500","1000")
+  )+
+  labs(
+    y="PCC",
+    x="Injection time (ms)"
+  )+
+  facet_wrap(
+    facets = vars(type)
+  )+
+  theme(
+  #axis.text.x = element_text(angle = 90,vjust = 0.5),
+  legend.position = "none"
+)
+ggsave(
+  paste0("./figures/supple_it.png"),
+  width = 15, height = 5, dpi=600, units = "cm"
+)
+```
+
+##b: isolation width
+```{r}
+read_tsv(
+  "./export/240405_QE_15cm_PRM_G24_DRju_HeLa_MGTG_PRTC_N27_W04_theospec_result_apdms2_summary.tsv"
+) %>% 
+  mutate(
+    exp = "width04"
+  ) %>% 
+  bind_rows(
+    read_tsv(
+      "./export/240405_QE_15cm_PRM_G24_DRju_HeLa_MGTG_PRTC_N27_W07_theospec_result_apdms2_summary.tsv"
+    )%>% 
+      mutate(
+        exp = "width07"
+      )
+  ) %>% 
+  bind_rows(
+    read_tsv(
+      "./export/240405_QE_15cm_PRM_G24_DRju_HeLa_MGTG_PRTC_N27_W12_theospec_result_apdms2_summary.tsv"
+    )%>% 
+      mutate(
+        exp = "width12"
+      )
+  ) %>% 
+  bind_rows(
+    read_tsv(
+      "./export/240405_QE_15cm_PRM_G24_DRju_HeLa_MGTG_PRTC_N27_W20_theospec_result_apdms2_summary.tsv"
+    )%>% 
+      mutate(
+        exp = "width20"
+      )
+  ) -> result_for_analysis_isowidth
+
+result_for_analysis_isowidth %>% 
+  pivot_wider(
+    id_cols = c(gene_position,sequence),
+    names_from = exp,
+    values_from = PCC
+  ) %>% 
+  mutate(
+    type = case_when(
+      str_detect(gene_position,"PRTC") ~ "PRTC",
+      str_detect(sequence,"^R") ~ "Arg",
+      gene_position %in% vector_upr_protein ~ "UPR",
+      .default = "free"
+    )
+  )->result_for_analysis_summary_isowidth
+  
+result_for_analysis_summary_isowidth %>% 
+  pivot_longer(
+    width04:width20
+  ) %>% 
+  filter(value >0.707) %>% 
+  write_tsv(
+      "./figures/supple_width.tsv"
+    ) %>% 
+  ggplot(
+    aes(x=name,y=value,fill=name)
+  )+
+  geom_boxplot()+
+  scale_x_discrete(
+    label = c("0.4","0.7","1.2","2.0")
+  )+
+  labs(
+    x="Isolation Width (m/z)",
+    y="PCC"
+  )+
+  facet_wrap(
+    facets = vars(type),
+    scale = "free_y"
+  )+
+  theme(
+    legend.position = "none"
+  )
+ggsave(
+  paste0("./figures/supple_width.png"),
+  width = 15, height = 5, dpi=600, units = "cm"
+)
+```
+
+
+#Supplement Fig. 19
+```{r}
+read_tsv(
+    "./export/240407_QE_15cm_PRM_G24_DRju_HeLa_MGTG_incl240407_c2_1_theospec_result_apdms2_summary.tsv"
+  ) %>% 
+    mutate(
+      exp = "c2_1",
+      mod_sites = as.character(mod_sites)
+    ) %>% 
+    bind_rows(
+      read_tsv(
+        "./export/240407_QE_15cm_PRM_G24_DRju_HeLa_MGTG_incl240407_c2_2_theospec_result_apdms2_summary.tsv"
+      )%>% 
+        mutate(
+          exp = "c2_2",
+          mod_sites = as.character(mod_sites)
+        )
+    ) %>% 
+    bind_rows(
+      read_tsv(
+        "./export/240407_QE_15cm_PRM_G24_DRju_HeLa_MGTG_incl240407_c3_1_theospec_result_apdms2_summary.tsv"
+      )%>% 
+        mutate(
+          exp = "c3_1",
+          mod_sites = as.character(mod_sites)
+        )
+    ) %>% 
+    bind_rows(
+      read_tsv(
+        "./export/240407_QE_15cm_PRM_G24_DRju_HeLa_MGTG_incl240407_c3_2_theospec_result_apdms2_summary.tsv"
+      )%>% 
+        mutate(
+          exp = "c3_2",
+          mod_sites = as.character(mod_sites)
+        )
+    )%>% 
+    bind_rows(
+      read_tsv(
+        "./export/240407_QE_15cm_PRM_G24_DRju_HeLa_MGTG_incl240407_c4_1_theospec_result_apdms2_summary.tsv"
+      )%>% 
+        mutate(
+          exp = "c4_1",
+          mod_sites = as.character(mod_sites)
+        )
+    ) %>% 
+    bind_rows(
+      read_tsv(
+        "./export/240407_QE_15cm_PRM_G24_DRju_HeLa_MGTG_incl240407_c5_1_theospec_result_apdms2_summary.tsv"
+      )%>% 
+        mutate(
+          exp = "c5_1",
+          mod_sites = as.character(mod_sites)
+        )
+    ) -> result_for_analysis_charge
+  
+  result_for_analysis_charge %>% 
+    pivot_wider(
+      id_cols = c(gene_position,sequence),
+      names_from = exp,
+      values_from = PCC
+    ) %>% 
+    mutate(
+      type = case_when(
+        str_detect(gene_position,"PRTC") ~ "PRTC",
+        str_detect(sequence,"^R") ~ "Arg",
+        gene_position %in% vector_upr_protein ~ "UPR",
+        .default = "free"
+      )
+    )->result_for_analysis_charge_summary
+  
+  result_for_analysis_charge_summary %>% 
+    pivot_longer(
+      c2_1:c5_1
+    ) %>% 
+    filter(value >0.7) %T>% 
+    write_tsv(
+      "./figures/charge.tsv"
+    ) %>% 
+    ggplot(
+      aes(x=name,y=gene_position,fill=value)
+    )+
+    geom_tile()+
+    scale_fill_distiller(
+      palette = "YlOrRd",
+      direction = 1
+    )+
+    labs(
+      x="Charge",
+      y="Gene Name and Position",
+      fill = "PCC"
+    )+
+    facet_wrap(
+      facets = vars(type),
+      scales = "free_y",
+      labeller = labeller(
+      type = c(
+        "Arg" = "Nt-arginylated",
+        "PRTC" = "Internal Standards"
+      )
+    )
+    )+
+    theme(
+      axis.text.x = element_text(angle = 90,vjust = 0.5,size = 10),
+      axis.text.y = element_text(size = 10),
+      strip.text = element_text(size = 12)
+    )
+  ggsave("./figures/charge.png",width = 18,height =18, units = "cm",dpi = 600)
+```
+
+
+
+#Supplement Fig. 20
+```{r}
+summary_prm_data %>% 
+  filter(
+    str_detect(Comment,"PRTC"),
+    !str_detect(Comment,"PRTC15")
+  ) %>% 
+  select(
+    gene_position,rt_observe_expect,Comment,file,file_num,treathour,treatment
+  ) %T>% 
+  write_tsv(
+    "./figures/rt_deviation_istd_rev.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=gene_position,y=rt_observe_expect,fill=Comment)
+  )+
+  geom_boxplot(
+    alpha = 0.2,
+    
+  )+
+  geom_dotplot(
+    aes(color = gene_position),
+    alpha = 0.4,
+    binaxis = "y", stackdir = "centerwhole",
+    stackratio = 0.5,
+    binwidth = 0.1,
+    dotsize = 1
+  )+
+  labs(
+    x= "ISTD Species",
+    y="Deviation from Expected RT [min]"
+  )+
+  theme_classic2()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 9,angle = 90,hjust=1,vjust=0.5),
+    axis.text.y = element_text(color = "black",size= 9),
+    axis.title = element_text(color = "black",size= 9),
+    legend.position = "none",
+    axis.ticks = element_line(color = "black"),
+  )
+ggsave(
+  paste0("./figures/rt_deviation_istd_rev.png"),
+  width = 8, height = 10, dpi=600, units = "cm"
+)
+  
+  summary_prm_data %>% 
+    filter(
+      str_detect(Comment,"PRTC"),
+      !str_detect(Comment,"PRTC15")
+    ) %>% 
+  select(
+    gene_position,PCC,Comment,file,file_num,treathour,treatment
+  ) %T>% 
+  write_tsv(
+    "./figures/ms2_deviation_istd_rev.tsv"
+  ) %>% 
+    ggplot(
+      aes(x=gene_position,y=PCC,fill=Comment)
+    )+
+    geom_boxplot(
+    alpha = 0.2,
+    
+  )+
+  # geom_dotplot(
+  #   aes(color = gene_position),
+  #   alpha = 0.4,
+  #   binaxis = "y", stackdir = "center",
+  #   #stackratio = 0.5,
+  #   #binwidth = 0.1,
+  #   dotsize = 0.1
+  # )+
+    # geom_dotplot(
+    #   aes(color = Comment),
+    #   alpha = 0.4,
+    #   binaxis = "y", stackdir = "centerwhole",
+    #   stackratio = 0.5,
+    #   binwidth = 0.01,
+    #   dotsize = 1
+    # )+
+    labs(
+      x= "ISTD Species",
+      y="PCC"
+    )+
+    lims(
+      y=c(0.5,1)
+    )+
+    theme_classic2()+
+    theme(
+    axis.text.x = element_text(color = "black",size= 9,angle = 90,hjust=1,vjust=0.5),
+    axis.text.y = element_text(color = "black",size= 9),
+    axis.title = element_text(color = "black",size= 9),
+    legend.position = "none",
+    axis.ticks = element_line(color = "black"),
+  )
+  ggsave(
+    paste0("./figures/ms2_deviation_istd_rev.png"),
+    width = 8, height = 10, dpi=600, units = "cm"
+  )
+
+  data_quan_fragpipe_ms1 %>% 
+    drop_na(corr3:corr6) %>% 
+    filter(
+      str_detect(gene_position,"PRTC")
+    ) %T>% 
+  write_tsv(
+    "./figures/correl_prm_ms1_rev.tsv"
+  ) %>% 
+    pivot_longer(
+      corr3:corr6
+    )  %>% 
+    ggplot(
+      aes(x=name,y=value,fill= name)
+    )+
+    geom_boxplot()+
+    scale_x_discrete(
+      labels = c(
+        "Top 3",
+        "Top 4",
+        "Top 5",
+        "Top 6"
+      )
+    )+
+    scale_fill_brewer(
+      palette = "Set1",
+      direction = 1
+    )+
+    labs(
+      x="PCC",
+      y="Criteria"
+    )+
+    lims(
+      y= c(0,1)
+    )+
+    theme_classic2()+
+    theme(
+      axis.text.x = element_text(color = "black",size= 9,angle = 90,hjust=1,vjust=0.5),
+    axis.text.y = element_text(color = "black",size= 9),
+    axis.title = element_text(color = "black",size= 9),
+    legend.position = "none",
+    axis.ticks = element_line(color = "black"),
+    )
+  ggsave(
+    paste0("./figures/correl_prm_ms1_rev.png"),
+    width = 8, height = 10, dpi=600, units = "cm"
+  )
+
+```
+
+#Supplement Fig. 21
+```{r}
+
+result_for_analysis_summary[,-c(21:26)] %>% 
+  pivot_longer(
+    where(is.numeric)
+  ) %>% 
+  mutate(
+    name = as.integer(name)
+  ) %>% 
+  left_join(
+    experiment_detail,
+    join_by(
+      name == file_num
+    )
+  ) %>% 
+  # mutate(
+  #   gene_position = fct(gene_position,levels = paste0(apoptosis,autophagy))
+  # ) %>% 
+  filter(value >0.707) %T>% 
+  write_tsv(
+    "./figures/sfig21.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=fct(as.character(treathour)),y=value)
+  )+
+  geom_boxplot(
+    aes(fill = fct(as.character(treathour)))
+  )+
+  labs(
+    x="Treatment hours (h)",
+    y="PCC",
+    fill = "PCC"
+  )+
+  facet_wrap(
+    facets = vars(fct(treatment,levels = c("MOCK","MG132","MGTG")),type),
+    #scales = "free_y",
+    shrink = FALSE
+  )+
+  theme(
+    axis.text.x = element_text(angle = 90,vjust = 0.5),
+    legend.position = "none"
+  )
+ggsave(
+  paste0("./figures/supple_24.png"),
+  width = 15, height = 15, dpi=600, units = "cm"
+)
+```
+
+
+
+#Supplement Fig. 22
+```{r}
+library(ggforce)
+
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  mutate(gene = str_split_i(gene_position,"_",1)) %>% 
+  distinct(gene) %>%
+  bind_cols(
+    tibble(
+      characteristics = c(
+        "Chaperone",
+        "Transit",
+        "Apoptosis",
+        "Apoptosis",
+        "Transit",
+        "Autophagy",
+        "Chaperone",
+        "Signal",
+        "Chaperone",
+        "Autophagy",
+        "Signal",
+        "UPR",
+        "Signal",
+        "Caspase",
+        "Signal",
+        "Signal",
+        "Caspase",
+        "Caspase",
+        "UPR",
+        "Autophagy",
+        "Caspase",
+        "Transit",
+        "Signal",
+        "Signal",
+        "Signal"
+      )
+    )
+  ) -> prm_gene_characteristics
+
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  filter(
+    arg == "arg"
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  mutate(
+    site = str_replace(site,"\\_","|")
+  ) %>% 
+  mutate(
+    site = str_replace(site,"BCL2\\|130","BCL"),
+    site = str_replace(site,"ATF4\\|76","ATF4"),
+    site = str_replace(site,"ERN1\\|280","ERN1"),
+  ) %>%
+  left_join(
+    table_keys_for_prm_revision,
+    join_by(site == gene_position)
+  ) %T>%
+  write_tsv(
+    "./figures/6_05_tile_MGTG_rev.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),fill=MGTG_MOCK,y=fct_rev(factor(new_notation)))
+  )+
+  geom_tile()+
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    na.value = "grey80"
+  )+
+  labs(x="Duration",y="Sites",fill = "Log2(MGTG/MOCK)")+
+  facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "top",
+    legend.spacing = unit(c(0,0,0,0), "cm"),
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/6_05_tile_MGTG_rev.png",height = 12, width =9,dpi = 600,units = "cm"
+)
+
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  filter(
+    arg == "free"
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  mutate(
+    site = str_replace(site,"\\_","|")
+  ) %>% 
+  # mutate(
+  #   site = str_replace(site,"BCL2\\|130","BCL"),
+  #   site = str_replace(site,"ATF4\\|76","ATF4"),
+  #   site = str_replace(site,"ERN1\\|280","ERN1"),
+  # ) %>% 
+  left_join(
+    table_keys_for_prm_revision,
+    join_by(site == gene_position)
+  ) %T>%
+  write_tsv(
+    "./figures/6_05_tile_MGTG_free_rev.tsv"
+  ) %>%
+  ggplot(
+    aes(x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),fill=MGTG_MOCK,y=fct_rev(factor(new_notation)))
+  )+
+  geom_tile()+
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    na.value = "grey80"
+  )+
+  labs(x="Duration",y="Sites",fill = "Log2(MGTG/MOCK)")+
+  facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "top",
+    legend.spacing = unit(c(0,0,0,0), "cm"),
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/6_05_tile_MGTG_free_rev.png",height = 12, width =9,dpi = 600,units = "cm"
+)
+RColorBrewer::display.brewer.all()
+
+
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  filter(
+    arg == "arg"
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  mutate(
+    site = str_replace(site,"\\_","|")
+  ) %>% 
+  # mutate(
+  #   site = str_replace(site,"BCL2\\|130","BCL"),
+  #   site = str_replace(site,"ATF4\\|76","ATF4"),
+  #   site = str_replace(site,"ERN1\\|280","ERN1"),
+  # ) %>% 
+  left_join(
+    table_keys_for_prm_revision,
+    join_by(site == gene_position)
+  ) %T>%
+  write_tsv(
+    "./figures/6_05_tile_MG_rev.tsv"
+  ) %>%
+  ggplot(
+    aes(x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),fill=MG_MOCK,y=fct_rev(factor(new_notation)))
+  )+
+  geom_tile()+
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    na.value = "grey80"
+  )+
+  labs(x="Duration",y="Sites",fill = "Log2(MG132/MOCK)")+
+  facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "top",
+    legend.spacing = unit(c(0,0,0,0), "cm"),
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 8,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/6_05_tile_MG_rev.png",height = 12, width =9,dpi = 600,units = "cm"
+)
+
+data_quan_summary_figure_crmn2 %>% 
+  ungroup() %>% 
+  summarize(
+    .by = c(treatment,treathour,key),
+    mean_int = mean(normalized_int),
+    sd_int = sd(normalized_int)
+  ) %>% 
+  pivot_wider(
+    id_cols=c(treathour,key),
+    names_from = treatment,
+    values_from = mean_int
+  ) %>% 
+  filter(
+    treathour != "9h"
+  ) %>% 
+  mutate(
+    MGTG_MOCK = log(MGTG/MOCK,2),
+    MG_MOCK = log(MG132/MOCK,2),
+    gene = str_split_i(key,"_",i=1),
+    pos = str_split_i(key,"_",i=2),
+    arg = str_split_i(key,"_",i=3),
+    site = paste0(gene,"_",pos)
+  ) %>% 
+  filter(
+    arg == "free"
+  ) %>% 
+  left_join(
+    prm_gene_characteristics,
+    join_by(gene)
+  ) %>% 
+  mutate(
+    site = str_replace(site,"\\_","|")
+  ) %>% 
+  # mutate(
+  #   site = str_replace(site,"BCL2\\|130","BCL"),
+  #   site = str_replace(site,"ATF4\\|76","ATF4"),
+  #   site = str_replace(site,"ERN1\\|280","ERN1"),
+  # ) %>% 
+  left_join(
+    table_keys_for_prm_revision,
+    join_by(site == gene_position)
+  ) %T>%
+  write_tsv(
+    "./figures/6_05_tile_MG_free_rev.tsv"
+  ) %>%
+  ggplot(
+    aes(x=fct(treathour,levels = c("0h","3h","6h","12h","18h","24h","48h")),fill=MG_MOCK,y=fct_rev(factor(new_notation)))
+  )+
+  geom_tile()+
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    na.value = "grey80"
+  )+
+  labs(x="Duration",y="Sites", fill = "Log2(MG132/MOCK)")+
+  facet_col(vars(characteristics),scales = "free_y", space = "free")+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 7),
+    axis.text.y =element_text(color = "black",size= 7),
+    axis.title = element_text(color = "black",size= 7),
+    plot.title = element_text(color = "black",size= 7),
+    legend.position = "none",
+    legend.margin = unit(c(0,0,0,0), "cm"),
+    panel.spacing = unit(0,"lines"),
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_text(color = "black",size= 7,margin = margin(t=2,b=2)),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 7),
+    legend.text = element_text(color = "black",size= 7)
+  )
+ggsave(
+  "./figures/6_05_tile_MG_free_rev.png",height = 9, width =9,dpi = 600,units = "cm"
+)
+```

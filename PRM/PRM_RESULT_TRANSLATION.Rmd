@@ -1,0 +1,886 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+#Libraries
+```{r message=FALSE}
+  library(tidyverse)
+library(magrittr)
+  library(OrgMassSpecR)
+  library(tidymodels)
+  tidymodels_prefer()
+  library(ggpubr)
+  options(tibble.width = Inf)
+  library(MSnbase)
+  library(peakPantheR)
+  conflicted::conflicts_prefer(dplyr::first)
+  library(limma)
+  library(crmn)
+```
+
+
+#Vectors
+```{r}
+folder_alphapeptdeep <- "C:/Users/admin/alphapeptdeep/apd_110/prm/"
+folder_raw <- "F:/2025_PRM_REVISION/"
+folder_result <- "F:/2025_PRM_REVISION/results/"
+folder_fragpipe <- "C:/FragPipe/FragPipe-23.1/"
+fragpipe<- paste0(folder_fragpipe,"bin/fragpipe.bat")
+#project_name <- "revision_250825" ##edit! mito, all
+project_name <- "revision_250909" ##edit!
+folder_alphapeptdeep_model <- paste0(folder_alphapeptdeep,"models/")
+python <- "C:/Users/admin/anaconda3/envs/apd_110/python.exe"
+```
+
+#Functions #FragmentPeptide3
+```{r}
+FragmentPeptide3 <-function (sequence, fragments = "by", IAA = TRUE, N15 = FALSE, nterm  = 0, cterm = 0, custom = list()){
+  results_list <- vector("list")
+  for (sequence_number in 1:length(sequence)) {
+    peptide_vector <- strsplit(sequence[sequence_number], 
+                               split = "")[[1]]
+    peptide_length <- length(peptide_vector)
+    if (peptide_length < 2) 
+      stop("sequence must contain two or more residues")
+    C <- 12
+    H <- 1.0078250331898 #CIAAW 2020
+    O <- 15.99491461926 #CIAAW 2020
+    S <- 31.97207117354 #CIAAW 2020
+    N <- ifelse(N15 == TRUE, 15.00010889827, 14.00307400425) #CIAAW 2020
+    Se <- 79.916521761 #CIAAW 2020
+    proton <- 1.0072764665789 #NIST 2022 CODATA
+    electron <- 0.0005485799090441 #NIST 2022 CODATA
+    residueMass <- function(residue) {
+      if (residue == "A") 
+        mass = C * 3 + H * 5 + N + O
+      if (residue == "R") 
+        mass = C * 6 + H * 12 + N * 4 + O
+      if (residue == "N") 
+        mass = C * 4 + H * 6 + N * 2 + O * 2
+      if (residue == "D") 
+        mass = C * 4 + H * 5 + N + O * 3
+      if (residue == "E") 
+        mass = C * 5 + H * 7 + N + O * 3
+      if (residue == "Q") 
+        mass = C * 5 + H * 8 + N * 2 + O * 2
+      if (residue == "G") 
+        mass = C * 2 + H * 3 + N + O
+      if (residue == "H") 
+        mass = C * 6 + H * 7 + N * 3 + O
+      if (residue == "I") 
+        mass = C * 6 + H * 11 + N + O
+      if (residue == "L") 
+        mass = C * 6 + H * 11 + N + O
+      if (residue == "K") 
+        mass = C * 6 + H * 12 + N * 2 + O
+      if (residue == "M") 
+        mass = C * 5 + H * 9 + N + O + S
+      if (residue == "F") 
+        mass = C * 9 + H * 9 + N + O
+      if (residue == "P") 
+        mass = C * 5 + H * 7 + N + O
+      if (residue == "S") 
+        mass = C * 3 + H * 5 + N + O * 2
+      if (residue == "T") 
+        mass = C * 4 + H * 7 + N + O * 2
+      if (residue == "W") 
+        mass = C * 11 + H * 10 + N * 2 + O
+      if (residue == "Y") 
+        mass = C * 9 + H * 9 + N + O * 2
+      if (residue == "U") 
+        mass = C * 3 + H * 5 + N + O + Se
+      if (residue == "V") 
+        mass = C * 5 + H * 9 + N + O
+      if (residue == "C" & IAA == FALSE) 
+        mass = C * 3 + H * 5 + N + O + S
+      if (residue == "C" & IAA == TRUE) 
+        mass <- ifelse(N15 == FALSE, C * 5 + H * 8 + 
+                         N * 2 + O * 2 + S, C * 5 + H * 8 + N + 14.0030740052 + 
+                         O * 2 + S)
+      if (length(custom) != 0) 
+        for (i in 1:length(custom$code)) if (residue == 
+                                             custom$code[i]) 
+          mass = custom$mass[i]
+      return(mass)
+    }
+    masses <- sapply(peptide_vector, residueMass)
+    pm <- sum(masses)
+    p1 <- round(pm+nterm+cterm + H * 2 + O + proton, digits = 3)
+    p2 <- round((pm+nterm+cterm + H * 2 + O + (2 * proton))/2, digits = 3)
+    p3 <- round((pm+nterm+cterm + H * 2 + O + (3 * proton))/3, digits = 3)
+    if (fragments == "by") {
+      b1 <- vector(mode = "numeric", length = 0)
+      b2 <- vector(mode = "numeric", length = 0)
+      bs <- vector(mode = "character", length = 0)
+      bi <- vector(mode = "integer", length = 0)
+      y1 <- vector(mode = "numeric", length = 0)
+      y2 <- vector(mode = "numeric", length = 0)
+      ys <- vector(mode = "character", length = 0)
+      yi <- vector(mode = "integer", length = 0)
+      for (i in 1:(peptide_length - 1)) {
+        mass <- sum(masses[1:i])+nterm
+        b1[i] <- round(mass + proton, digits = 3)
+        b2[i] <- round((b1[i] + proton)/2, digits = 3)
+        bs[i] <- paste(peptide_vector[1:i], collapse = "")
+        bi[i] <- i
+      }
+      for (j in 2:peptide_length) {
+        mass <- sum(masses[j:peptide_length])+cterm
+        y1[j - 1] <- round(mass + H * 2 + O + proton, 
+                           digits = 3)
+        y2[j - 1] <- round((y1[j - 1] + proton)/2, digits = 3)
+        ys[j - 1] <- paste(peptide_vector[j:peptide_length], 
+                           collapse = "")
+        yi[j - 1] <- peptide_length - j + 1
+      }
+      ms1seq <- rep(sequence[sequence_number], times = ((2 * 
+                                                           (length(bi))) + (2 * (length(yi)))))
+      ms1z1 <- rep(p1, times = ((2 * (length(bi))) + (2 * 
+                                                        (length(yi)))))
+      ms1z2 <- rep(p2, times = ((2 * (length(bi))) + (2 * 
+                                                        (length(yi)))))
+      ms1z3 <- rep(p3, times = ((2 * (length(bi))) + (2 * 
+                                                        (length(yi)))))
+      ms2seq <- c(rep(bs, times = 2), rep(ys, times = 2))
+      b1.type <- paste("[b", bi, "]1+", sep = "")
+      b2.type <- paste("[b", bi, "]2+", sep = "")
+      y1.type <- paste("[y", yi, "]1+", sep = "")
+      y2.type <- paste("[y", yi, "]2+", sep = "")
+      ms2type <- c(b1.type, b2.type, y1.type, y2.type)
+      ms2mz <- c(b1, b2, y1, y2)
+    }
+    if (fragments == "cz") {
+      c1 <- vector(mode = "numeric", length = 0)
+      c2 <- vector(mode = "numeric", length = 0)
+      cs <- vector(mode = "character", length = 0)
+      ci <- vector(mode = "integer", length = 0)
+      z1 <- vector(mode = "numeric", length = 0)
+      z2 <- vector(mode = "numeric", length = 0)
+      zs <- vector(mode = "character", length = 0)
+      zi <- vector(mode = "integer", length = 0)
+      for (i in 1:(peptide_length - 1)) {
+        mass <- sum(masses[1:i])
+        c1[i] <- round(mass + 3 * H + N + proton, digits = 3)
+        c2[i] <- round((c1[i] + proton)/2, digits = 3)
+        cs[i] <- paste(peptide_vector[1:i], collapse = "")
+        ci[i] <- i
+      }
+      for (j in 2:peptide_length) {
+        mass <- sum(masses[j:peptide_length])
+        z1[j - 1] <- round(mass + O - N, digits = 3)
+        z2[j - 1] <- round((z1[j - 1] + proton)/2, digits = 3)
+        zs[j - 1] <- paste(peptide_vector[j:peptide_length], 
+                           collapse = "")
+        zi[j - 1] <- peptide_length - j + 1
+      }
+      ms1seq <- rep(sequence[sequence_number], times = ((2 * 
+                                                           (length(ci))) + (2 * (length(zi)))))
+      ms1z1 <- rep(p1, times = ((2 * (length(ci))) + (2 * 
+                                                        (length(zi)))))
+      ms1z2 <- rep(p2, times = ((2 * (length(ci))) + (2 * 
+                                                        (length(zi)))))
+      ms1z3 <- rep(p3, times = ((2 * (length(ci))) + (2 * 
+                                                        (length(zi)))))
+      ms2seq <- c(rep(cs, times = 2), rep(zs, times = 2))
+      c1.type <- paste("[c", ci, "]1+", sep = "")
+      c2.type <- paste("[c", ci, "]2+", sep = "")
+      z1.type <- paste("[z", zi, "]1+", sep = "")
+      z2.type <- paste("[z", zi, "]2+", sep = "")
+      ms2type <- c(c1.type, c2.type, z1.type, z2.type)
+      ms2mz <- c(c1, c2, z1, z2)
+    }
+    results_list[[sequence_number]] <- data.frame(ms1seq, 
+                                                  ms1z1, ms1z2, ms1z3, ms2seq, ms2type, ms2mz)
+  }
+  return(as.data.frame(do.call("rbind", results_list)))
+}
+```
+
+# RESULT 
+## Converting raw to mzML
+```{r}
+system(
+  paste0(
+    'powershell -Command \"',
+    "cd ",
+    folder_result,
+    "; ",
+    "msconvert",
+    " ",
+    "*.raw",
+    " ",
+    "-c msconvert_config.txt"
+  ),
+  wait =TRUE,
+  invisible = FALSE
+)
+
+```
+
+## Reading MS Result:: reading raw files and matching ms2 spectra to targets.
+<!-- raws >> ms2_data -->
+<!-- ms2_data@mz_upr = mz + 0.001 :: ms1 mass matching. -->
+<!-- ms2_data@mz_lwr = mz - 0.001 -->
+<!-- table_arg_predicted >> table_arg_inclusionlist -->
+<!-- table_arg_inclusionlist -->
+<!-- table_arg_inclusionlist + ms2_data >> result_prm -->
+```{r}
+files_result <- dir(
+  folder_result,
+  pattern = "mzML"
+)
+
+for (i in 1:length(files_result)){
+  if (i == 1) {
+    MSnbase::readMSData(
+      paste0(folder_result,files_result[i])
+    ) -> ms2_data
+    tibble(
+      precursormz = unique(precursorMz(ms2_data)),
+      file = files_result[i]
+    ) %>% 
+      mutate(
+        data = map(
+          precursormz,
+          \(x) extractPrecSpectra(ms2_data,x) 
+        ),
+        ms_table = map(
+          data,
+          \(x) extractSpectraData(x) %>% as_tibble() %>% 
+            bind_cols(
+              rt=rtime(x),
+              charge = precursorCharge(x),
+              tic=tic(x),
+              nce = collisionEnergy(x)
+            )
+        )
+      ) -> ms2_data
+  } else {
+    MSnbase::readMSData(
+      paste0(folder_result,files_result[i])
+    ) -> ms2_data2
+    tibble(
+      precursormz = unique(precursorMz(ms2_data2)),
+      file = files_result[i]
+    ) %>% 
+      mutate(
+        data = map(
+          precursormz,
+          \(x) extractPrecSpectra(ms2_data2,x) 
+        ),
+        ms_table = map(
+          data,
+          \(x) extractSpectraData(x) %>% as_tibble() %>% 
+            bind_cols(
+              rt=rtime(x),
+              charge = precursorCharge(x),
+              tic=tic(x),
+              nce = collisionEnergy(x)
+            )
+        )
+      ) -> ms2_data2
+    bind_rows(
+      ms2_data,
+      ms2_data2
+    )->ms2_data
+    rm(ms2_data2)
+  }
+}
+
+ms2_data %>%
+  write_rds(
+    paste0("./",project_name,"_ms2_data.rds")
+  )
+
+ms2_data %>% 
+  select(-data) %>% 
+  unnest(ms_table) %>% 
+  mutate(
+    mz = unname(mz),
+    intensity = unname(intensity)
+  ) %>% 
+  mutate(
+    spec_table = map2(
+      mz,
+      intensity,
+      \(x,y) tibble(mz=x,int=y)
+    )
+  ) %>% 
+  select(-c(mz,intensity)) %>% 
+  nest(data = c(spectrum,charge,nce,rt,tic,spec_table)) -> ms2_data
+
+ms2_data %>% #head() %>% pull(data)
+  mutate(
+    rt_start = map_dbl(
+      data,
+      \(x) arrange(x,rt) %>% slice_head(n=1) %>% pull(rt)
+    )/60,
+    rt_end = map_dbl(
+      data,
+      \(x) arrange(x,rt) %>% slice_tail(n=1) %>% pull(rt)
+    )/60,
+    charge= map_int(
+      data,
+      \(x) arrange(x,rt) %>% slice_head(n=1) %>% pull(charge)
+    ),
+    nce = map_int(
+      data,
+      \(x) arrange(x,rt) %>% slice_head(n=1) %>% pull(nce)
+    )
+  ) -> ms2_data
+
+
+  
+# 
+# table_arg_predicted_final %>% 
+#   # filter(
+#   #   mz >=300 & mz<=900
+#   # ) %>% 
+#   filter(
+#     charge >1
+#   ) %>% 
+#   mutate(
+#     mz = round(mz,4)
+#   ) %>% 
+#   mutate(
+#     Comment = paste0(gene_position,"_",sequence,"_",charge)
+#   ) %>% 
+#   select(
+#     mz,
+#     irt_pred,
+#     charge,
+#     Comment
+#   ) %>% 
+#   mutate(
+#     mz= as.character(mz),
+#     lwr = as.character(round(irt_pred,2)-5),
+#     upr = as.character(round(irt_pred,2)+5)
+#   ) %>% 
+#   mutate(
+#     mz= as.double(mz),
+#     lwr = as.double(lwr),
+#     upr = as.double(upr),
+#     charge = as.integer(charge),
+#     mz_upr = mz+0.001,
+#     mz_lwr = mz-0.001
+#   ) -> table_arg_inclusionlist
+
+read_csv(
+  paste0("./inclusionlist/","incl_",project_name,".csv")
+) -> table_arg_inclusionlist
+  
+table_arg_inclusionlist %>% 
+  select(
+    `Mass [m/z]`,`CS [z]`,`Start [min]`,`End [min]`,Comment
+  ) %>% 
+  rename(
+    mz=`Mass [m/z]`,
+    charge = `CS [z]`,
+    lwr = `Start [min]`,
+    upr = `End [min]`
+  ) %>% 
+  mutate(
+    mz_upr = mz+0.001,
+    mz_lwr = mz-0.001
+  ) %>% 
+  left_join(
+    ms2_data,
+    join_by(
+      charge == charge,
+      #lwr <= rt_start,
+      # upr >= rt_end,
+      between(y$precursormz,x$mz_lwr,x$mz_upr)
+    )
+  )-> result_prm
+
+```
+
+## Moving the results
+```{r}
+
+files_result
+
+dir.create(
+  paste0(folder_raw,"results/",project_name,"/")
+)
+
+#MOVE SPECTRAL FILES
+system(
+  paste0(
+    'powershell -Command \"',
+    "cd ",
+    folder_raw,"results/",
+    "; ",
+    "Move-Item ",
+    "-path ",
+    ".\\*.mzML",
+    " ",
+    "-destination ",
+    ".\\",project_name
+  )
+)
+
+#MOVE SPECTRAL FILES
+system(
+  paste0(
+    'powershell -Command \"',
+    "cd ",
+    folder_raw,"results/",
+    "; ",
+    "Move-Item ",
+    "-path ",
+    ".\\*.raw",
+    " ",
+    "-destination ",
+    ".\\",project_name
+  )
+)
+```
+
+
+## Processing MS Result:: Matching for theoretical spectra
+<!-- result_prm >> result_prm_theospec -->
+<!-- result_prm_theospec >> result_prm_theospec_filtered :: 5 ppm error, at least 3 matchings.>>+_ 10 ppm -->
+```{r}
+###SPECTRUM MATCHING
+#result_prm
+result_prm %>% 
+  mutate(
+    gene_position = str_split_i(Comment,"_",1),
+    sequence = str_split_i(Comment,"_",2),
+    charge_inclusionlist = str_split_i(Comment,"_",3)
+  ) %>% 
+  mutate(
+    cys = map(
+      sequence,
+      \(x) str_locate_all(x,"C") %>% deframe() %>% as_tibble
+    )
+  ) %>% 
+  mutate(
+    mod_sites = map_chr(
+      cys,
+      \(x) pull(x, start) %>% paste0(collapse =";")
+    ),
+    mods = str_replace_all(
+      mod_sites,"[0-9]+","Carbamidomethyl@C"
+    )
+  ) %>% 
+  select(-cys) %>% 
+  mutate(
+    index = 1:nrow(.),
+    nAA = str_length(sequence)
+  ) %>% 
+  mutate(
+    mods = case_when(
+      str_detect(gene_position,"PRTC") & str_detect(sequence,"K$")~"Label:13C(6)15N(2)@K",
+      str_detect(gene_position,"PRTC") & str_detect(sequence,"R$")~"Label:13C(6)15N(4)@R",
+      .default = mods
+    ),
+    mod_sites = case_when(
+      str_detect(gene_position,"PRTC") & str_detect(sequence,"K$")~as.character(str_length(sequence)),
+      str_detect(gene_position,"PRTC") & str_detect(sequence,"R$")~as.character(str_length(sequence)),
+      .default = mod_sites
+    )
+  ) %>% 
+  mutate(
+    sequence_mod = case_when(
+      str_detect(gene_position,"PRTC") & str_detect(sequence,"K$") ~ str_replace(sequence,regex("K$"),"k"),
+      str_detect(gene_position,"PRTC") & str_detect(sequence,"R$") ~ str_replace(sequence,regex("R$"),"r"),
+      str_detect(gene_position,"\\|H$") ~ str_replace_all(sequence,"R","b"),
+      .default = sequence
+    )
+  ) %>%
+  mutate(
+    theo_spec = map(
+      sequence_mod,
+      \(x) FragmentPeptide3(
+        x,
+        custom = list(code = c("b","k","r"), mass=c(162.121240031076,136.109161810616,166.109379607156))
+      )
+    )
+  ) %>%
+  select(-c(charge,nce)) %>% 
+  unnest(data)->result_prm_theospec
+
+##5 ppm error
+result_prm_theospec %>% #head() %>% 
+  mutate(
+    theo_spec=map(
+      theo_spec,
+      \(x) mutate(x,ms2mz_lwr = ms2mz/(1e6+20)*1e6, ms2mz_upr = ms2mz/(1e6-20)*1e6)
+    )
+  ) %>% #pull(theo_spec)
+  mutate(
+    spec_matched = map2(
+      spec_table,
+      theo_spec,
+      \(x,y) left_join(
+        x,y,
+        join_by(
+          between(x$mz,y$ms2mz_lwr,y$ms2mz_upr)
+        ),
+        multiple = "first"
+      )
+    )
+  ) %>%
+  mutate(
+    spec_matched = map(
+      spec_matched,
+      \(x) drop_na(x)
+    ),
+    spec_matched_nrow = map_int(
+      spec_matched,
+      \(x) nrow(x)
+    ),
+    rt_min = rt/60,
+    rt_dev = rt_min-(upr-5)
+  ) -> result_prm_theospec
+
+result_prm_theospec %>% 
+  filter(
+    spec_matched_nrow >=3
+  ) -> result_prm_theospec_filtered
+
+result_prm_theospec_filtered %>% 
+  # filter(
+  #   str_detect(gene_position,"PRTC")
+  # ) %>% 
+  ggplot(
+    aes(x=rt_dev)
+  )+
+  geom_histogram()
+
+result_prm_theospec_filtered %>% 
+  mutate(
+    spec_matched_intsum = map_dbl(
+      spec_matched,
+      \(x) pull(x,int) %>% sum()
+    )
+  )->result_prm_theospec_filtered
+
+result_prm_theospec_filtered %>% 
+  mutate(
+    gene_pos_arg = paste0(if_else(str_detect(sequence,"^R"),"R-",""),gene_position)
+  )->result_prm_theospec_filtered
+
+result_prm_theospec_filtered %>% write_tsv(
+  paste0(project_name,"_result_filtered.tsv")
+)
+
+result_prm_theospec_filtered %>% 
+  write_rds(
+    paste0("./export/",project_name,"_result_prm_theospec_filtered.rds")
+  )
+
+```
+
+## Translation of MS Result: Preparing tables for APD
+<!-- result_prm_theospec_filtered >> ms2_test.tsv, ms2_test_frag_df.tsv -->
+<!-- result_prm_theospec_filtered >> export/240504_QE_15cm_PRM_G24_DRju_HeLa_48_theospec_result.tsv -->
+```{r}
+dir.create(
+  paste0(
+    folder_alphapeptdeep,"input/",project_name
+  )
+)
+
+result_prm_theospec_filtered %>% #slice_sample(n=20) %>% 
+  mutate(
+    spec_matched = map(
+      spec_matched,
+      \(x) mutate(
+        x,
+        ion_type = str_extract(ms2type,"[by]"),
+        ion_number = str_extract(ms2type,"(?<=[by])[0-9]+"),
+        charge = str_extract(ms2type,"[0-9](?=\\+)"),
+        rel_int = int/max(int),
+        fragment_head = paste0(ion_type,"_z",charge)
+      )
+    )
+  ) %>% 
+  mutate(
+    frag_df0 = map2(
+      spec_matched,
+      nAA,
+      \(x,y) mutate(x, ion_number = if_else(str_detect(fragment_head,"y"),y-as.integer(ion_number),as.integer(ion_number))
+      ) %>% 
+        select(
+          ion_number,fragment_head,rel_int
+        ) %>% 
+        arrange(desc(rel_int)) %>% distinct(fragment_head,ion_number,.keep_all = TRUE)
+    )
+  ) %>%  
+  mutate(
+    frag_df = map(
+      frag_df0,
+      \(x) pivot_wider(x,id_cols = ion_number,names_from = fragment_head,values_from = rel_int) %>% 
+        mutate(
+          ion_number= as.integer(ion_number)
+        )
+    )
+  ) %>% 
+  mutate(
+    frag_df2 = map(
+      nAA,
+      \(x) tibble(
+        ion_number = 1L:(x-1),
+        b_z1=rep(NA_real_,(x-1)),b_z2=rep(NA_real_,(x-1)),y_z1=rep(NA_real_,(x-1)),y_z2=rep(NA_real_,(x-1))
+      )
+    )
+  ) %>% 
+  mutate(
+    frag_df3 = map2(
+      frag_df,
+      frag_df2,
+      \(x,y) full_join(x,y,multiple = "first",join_by(ion_number)) %>% 
+        select(
+          -ends_with("y")
+        ) %>% 
+        rename_with(
+          .fn=\(x) str_replace(x,"\\.x$","")
+        ) %>% 
+        arrange(ion_number) %>% 
+        select(
+          ion_number,b_z1,b_z2,y_z1,y_z2
+        )
+    )
+  ) %>%
+  mutate(
+    frag_df3 = map(
+      frag_df3,
+      \(x) mutate(x,across(everything(),\(y) coalesce(y,0)))
+    )
+  ) %>%
+  select(-c(frag_df0,frag_df,frag_df2)) %>% 
+  unnest(frag_df3) %>% 
+  mutate(
+    frag_index = 0:(nrow(.)-1)
+  ) %>% 
+  nest(
+    frag_df = c(frag_index,ion_number,b_z1:y_z2)
+  ) %>% 
+  mutate(
+    frag_start_idx = map_int(
+      frag_df,
+      \(x) pull(x,frag_index)[1]
+    ),
+    frag_stop_idx = map_int(
+      frag_df,
+      \(x) pull(x,frag_index) %>% tail(n=1)+1
+    )
+  )-> result_prm_theospec_filtered
+
+result_prm_theospec_filtered %>%
+  mutate(
+    spec_idx = 1:nrow(.)
+  ) %>% 
+  select(
+    sequence,charge,spec_idx,spec_matched_nrow,Comment,index,mods,mod_sites,nAA,nce,frag_start_idx,frag_stop_idx
+  ) %>%
+  mutate(
+    instrument = "QE"
+  ) %>% 
+  write_tsv(
+    paste0(
+      folder_alphapeptdeep,"input/",project_name,"/ms2_test.tsv"
+    )
+  )
+
+result_prm_theospec_filtered %>% 
+  select(
+    frag_df
+  ) %>% 
+  unnest(frag_df) %>% 
+  select(-c(frag_index,ion_number)) %>% 
+  write_tsv(
+    paste0(
+      folder_alphapeptdeep,"input/",project_name,"/ms2_test_frag_df.tsv"
+    )
+  )
+
+```
+
+## MS2 PREDICTION
+```{r}
+c(
+  "import pandas as pd",
+  paste0(
+    "precursor_df = pd.read_table('",
+    folder_alphapeptdeep,"input/",project_name,"/ms2_test.tsv",
+    "',dtype={'mod_sites':'string'})"
+  ),
+  paste0(
+    "fragment_intensity_df = pd.read_table('",
+    folder_alphapeptdeep,"input/",project_name,"/ms2_test_frag_df.tsv')"
+  ),
+  "precursor_df = precursor_df.fillna('')",
+  "precursor_df['mod_sites'] = precursor_df['mod_sites'].astype('string')",
+  "from peptdeep.pretrained_models import *",
+  "model_mgr = ModelManager(mask_modloss=False)",
+  paste0(
+    "model_mgr.load_external_models(ms2_model_file ='",
+    folder_alphapeptdeep_model,
+    "ms2_915434/ms2.pth",
+    "')"
+  ),
+  "predict_inten_df=model_mgr.predict_ms2(precursor_df)",
+  "metrics_describ = calc_ms2_similarity(",
+  "  precursor_df,",
+  "  predict_intensity_df=predict_inten_df,",
+  "  fragment_intensity_df=fragment_intensity_df,",
+  "  spc_top_k=0",
+  ")",
+  paste0(
+    "metrics_describ[0].to_csv('",
+    folder_alphapeptdeep,"output/",project_name,"/output_metrics_ms2_prediction.tsv'",
+    ",sep='\t')"
+  ),
+  paste0(
+    "metrics_describ[1].to_csv('",
+    folder_alphapeptdeep,"output/",project_name,"/output_summary_ms2_prediction.tsv'",
+    ",sep='\t')"
+  ),
+  paste0(
+    "predict_inten_df.to_csv('",
+    folder_alphapeptdeep,"output/",project_name,"/output_fragdf_ms2_prediction.tsv'",
+    ",sep='\t')"
+  )
+) %>% 
+  write(
+    paste0(
+      folder_alphapeptdeep,"ms2_prediction.py"
+    )
+  )
+
+script <- paste0(folder_alphapeptdeep,"ms2_prediction.py")
+
+system(
+  paste0(
+    'powershell -Command \"',
+    "cd ",folder_alphapeptdeep,"; ",
+    python," ",
+    script
+  ),
+  wait =TRUE,
+  invisible = FALSE
+)
+```
+
+## Translation of MS Result:: Reading APD result
+<!-- output/output_metrics_ms2_prediction.tsv >> result_prm_alphapeptdeep_ms2 -->
+<!-- result_prm_theospec_filtered + result_prm_alphapeptdeep_ms2 + output_metrics_ms2_prediction_pretrained.tsv >> result_prm_theospec_filtered_apdms2 -->
+<!-- result_prm_theospec_filtered_apdms2 >> _theospec_result_apdms2_summary.tsv !! this going to be result_for analysis object! -->
+```{r}
+read_tsv(
+    paste0(folder_alphapeptdeep,"output/",project_name,"/output_metrics_ms2_prediction.tsv")
+  ) -> result_prm_alphapeptdeep_ms2
+  
+  
+result_prm_theospec_filtered %>% 
+  bind_cols(
+    result_prm_alphapeptdeep_ms2 %>% 
+      select(PCC,COS,SA,SPC)
+  ) -> result_prm_theospec_filtered_apdms2
+  
+result_prm_theospec_filtered_apdms2 %>% 
+  mutate(
+    rt_min = rt/60,
+    rt_expect = (upr+lwr)/2,
+    rt_observe_expect = rt_min-rt_expect
+  ) %>%
+  mutate(
+    peak_table_for_graph = map2(
+      spec_table,
+      theo_spec,
+      \(x,y) left_join(
+        x,y,
+        join_by(
+          between(x$mz,y$ms2mz_lwr,y$ms2mz_upr)
+        ),
+        multiple = "first"
+      )
+    )
+  ) %>% #pull(peak_table_for_graph)
+  mutate(
+    peak_table_for_graph= map(
+      peak_table_for_graph,
+      \(x) mutate(x, ion_num = as.integer(str_extract(ms2type,"[0-9]+(?=\\])")))
+    )
+  ) %>% 
+  mutate(
+    peak_table_for_graph= map(
+      peak_table_for_graph,
+      \(x) mutate(
+        x,
+        charge = as.integer(str_extract(ms2type,"[0-9]+(?=\\+)")),
+        series = str_extract(ms2type,"[by]")
+      )
+    )
+  ) %>% 
+  unnest(frag_df) %>% 
+  bind_cols(
+    read_tsv(
+      paste0(folder_alphapeptdeep,"output/",project_name,"/output_fragdf_ms2_prediction.tsv")
+    )%>% 
+      select(b_z1:y_z2) %>% 
+      rename_with(
+        .fn = \(x) paste0(x,"_pred"),
+        .cols = everything()
+      )
+  ) %>% 
+  nest(
+    frag_df_pred = c(frag_index,ion_number,b_z1,b_z2,y_z1,y_z2,b_z1_pred,b_z2_pred,y_z1_pred,y_z2_pred)
+  ) -> result_prm_theospec_filtered_apdms2
+
+result_prm_theospec_filtered_apdms2 %>%
+  filter(
+    PCC>0.7
+  ) %T>% 
+  write_rds(
+    paste0("./export/",project_name,"_result_prm_theospec_filtered_apdms2.rds")
+  ) %>% 
+  write_tsv(
+    paste0("./export/",project_name,"_result_prm_theospec_filtered_apdms2.tsv")
+  )
+
+result_prm_theospec_filtered_apdms2 %>%
+  filter(
+    PCC>0.7
+  ) -> result_prm_theospec_filtered_apdms2_pcc
+
+result_prm_theospec_filtered_apdms2_pcc %>% 
+  summarize(
+    .by = c(gene_pos_arg,file),
+    sum_int = sum(spec_matched_intsum)
+  ) %>% 
+  pivot_wider(
+    id_cols = gene_pos_arg,
+    names_from = file,
+    values_from = sum_int
+  ) %>% 
+  write_tsv(
+    paste0("./export/",project_name,"_result_prm_theospec_filtered_apdms2_pcc_summary.tsv")
+  )
+
+
+result_prm_theospec_filtered_apdms2_pcc %>% 
+  mutate(
+    spec_matched_intsum = log(spec_matched_intsum,2)
+  ) %>% 
+  ggplot(
+    aes(x= rt_observe_expect,y=spec_matched_intsum)
+  )+
+  geom_point()+
+  facet_wrap(
+    facets = vars(Comment,file),
+    scales = "free"
+  )
+ggsave(
+  "test.png",
+  width = 40,
+  height = 40
+)
+
+```  

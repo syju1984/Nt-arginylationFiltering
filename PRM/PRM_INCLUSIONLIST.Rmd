@@ -1,0 +1,960 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+
+#Libraries
+```{r message=FALSE}
+  library(tidyverse)
+library(magrittr)
+  library(OrgMassSpecR)
+  library(tidymodels)
+  tidymodels_prefer()
+  library(ggpubr)
+  options(tibble.width = Inf)
+  library(MSnbase)
+  library(peakPantheR)
+  conflicted::conflicts_prefer(dplyr::first)
+  library(limma)
+  library(crmn)
+```
+
+#Vectors
+```{r}
+folder_alphapeptdeep <- "C:/Users/admin/alphapeptdeep/apd_110/prm/"
+folder_raw <- "F:/2025_PRM_REVISION/"
+folder_result <- "F:/2025_PRM_REVISION/results/"
+folder_fragpipe <- "C:/FragPipe/FragPipe-23.1/"
+fragpipe<- paste0(folder_fragpipe,"bin/fragpipe.bat")
+project_name <- "revision_250826" ##edit!
+folder_alphapeptdeep_model <- paste0(folder_alphapeptdeep,"models/")
+python <- "C:/Users/admin/anaconda3/envs/apd_110/python.exe"
+```
+
+#PRTC Table >> table_prtc
+objects for PRTCs: sequences, modifications, masses
+```{r}
+tibble(
+  sequence = c(
+    "SSAAPPPPPR",
+    "GISNEGQNASIK",
+    "HVLTSIGEK",
+    "DIPVPKPK",
+    "IGDYAGIK",
+    "TASEFDSAIAQDK",
+    "SAAGAFGPELSR",
+    "ELGQSGVDTYLQTK",
+    "GLILVGGYGTR",
+    "GILFVGSGVSGGEEGAR",
+    "SFANQPLEVVYSK",
+    "LTILEELR",
+    "NGFILDGFPR",
+    "ELASGLSFPVGFK",
+    "LSSEAPALFQFDLK"
+  ),
+  sequence2 = c(
+    "SSAAPPPPPJ",
+    "GISNEGQNASIB",
+    "HVLTSIGEB",
+    "DIPVPKPB",
+    "IGDYAGIB",
+    "TASEFDSAIAQDB",
+    "SAAGAFGPELSJ",
+    "ELGQSGVDTYLQTB",
+    "GLILVGGYGTJ",
+    "GILFVGSGVSGGEEGAJ",
+    "SFANQPLEVVYSB",
+    "LTILEELJ",
+    "NGFILDGFPJ",
+    "ELASGLSFPVGFB",
+    "LSSEAPALFQFDLB"
+  ),
+  charge = rep(2L,15),
+  gene_position=c(
+    "PRTC01",
+    "PRTC02",
+    "PRTC03",
+    "PRTC04",
+    "PRTC05",
+    "PRTC06",
+    "PRTC07",
+    "PRTC08",
+    "PRTC09",
+    "PRTC10",
+    "PRTC11",
+    "PRTC12",
+    "PRTC13",
+    "PRTC14",
+    "PRTC15"
+  ),
+  mods= c(
+    "Label:13C(6)15N(4)@R",
+    "Label:13C(6)15N(2)@K",
+    "Label:13C(6)15N(2)@K",
+    "Label:13C(6)15N(2)@K",
+    "Label:13C(6)15N(2)@K",
+    "Label:13C(6)15N(2)@K",
+    "Label:13C(6)15N(4)@R",
+    "Label:13C(6)15N(2)@K",
+    "Label:13C(6)15N(4)@R",
+    "Label:13C(6)15N(4)@R",
+    "Label:13C(6)15N(2)@K",
+    "Label:13C(6)15N(4)@R",
+    "Label:13C(6)15N(4)@R",
+    "Label:13C(6)15N(2)@K",
+    "Label:13C(6)15N(2)@K"
+  ),
+  mod_sites = as.character(c(
+    10L,
+    12L,
+    9L,
+    8L,
+    8L,
+    13L,
+    12L,
+    14L,
+    11L,
+    17L,
+    13L,
+    8L,
+    10L,
+    13L,
+    14L
+  )),
+  index = c(
+    2001:2015
+  ),
+  cleavage_type = c(
+    rep("PRTC",15)
+  ),
+  mz = c(
+    493.7683,
+    613.3167,
+    496.2867,
+    451.2834,
+    422.7364,
+    695.8323,
+    586.8002,
+    773.8955,
+    558.3259,
+    801.4114,
+    745.3924,
+    498.8018,
+    573.3024,
+    680.3735,
+    787.4212
+  )
+) -> table_prtc
+```
+
+#PRM Targets >> Manual
+The function of this code is to allow for targets to be added by hand.
+```{r}
+read_tsv(
+    "./export/natcomm_revision/table_arginylome_revision_targets_filterd.tsv"
+  ) -> table_arginylome_revision
+```
+
+#PRM Targets
+code for Nt-arg targets and string manipulations: digestion for tryptic peptides, length, charge 
+```{r}
+
+# read_tsv(
+#   "arginylome_validation_matrix3_sequence_distinct_trinity_240401.tsv"
+# )->table_arginylome
+# 
+# table_arginylome %>% write_tsv(
+#   "./export/natcomm_revision/table_arginylome_natcomm_revision.tsv"
+# )
+
+# readxl::read_xlsx(
+#   "./export/natcomm_revision/revision_targets.xlsx"
+# ) -> table_arginylome_revision
+
+
+table_arginylome_revision %>% 
+    select(
+      prot_pos_master,gene_position,cleavage_type,source_cleavage,gene,MOCK,MG132,MGTG,sequence,Sequence,protease,loc
+    ) %>% 
+    mutate(
+      trypticpep = map2(
+        sequence,
+        Sequence,
+        \(x,y) digest2(x) %>% bind_rows(digest2(y))
+      )
+    ) %>% 
+    unnest(trypticpep) %>% 
+    filter(
+      start ==1
+    ) %>% 
+    filter(
+      stop >5
+    ) %>% 
+    mutate(
+      charge_predict = Peptides::charge(peptide,pH = 2,pKscale = "EMBOSS"),
+      charge_predict_round =round(charge_predict)
+    ) %>% 
+    mutate(
+      target_type = if_else(str_detect(peptide,"^R"),"arg","free"),
+      target_index = paste0(gene_position,"_",target_type)
+    ) %>% 
+  distinct(
+    target_index,.keep_all = TRUE
+  )-> table_arginylome_revision_targets
+
+table_arginylome_revision_targets %>% 
+  select(
+    -sequence
+  ) %>% 
+  rename(
+    sequence = peptide
+  ) %>% 
+  pivot_longer(
+    mz1:mz5,
+    names_to = "charge_calc",
+    values_to = "mz"
+  ) %>% 
+  mutate(
+    charge = as.integer(str_extract(charge_calc,"[0-9]$")),
+    matched_w_predictedcharge = if_else(abs(charge_predict_round-charge)<2,TRUE,FALSE)
+  ) %>% 
+  filter(
+    matched_w_predictedcharge == TRUE &
+    charge >1
+  ) -> table_arginylome_revision_targets_filterd
+
+table_arginylome_revision_targets_filterd %>% 
+  write_tsv(
+    "./export/natcomm_revision/table_arginylome_revision_targets_filterd_original.tsv"
+  )
+```
+
+#PRM Targets
+adding prtc info into the target tibble.
+```{r}
+table_arginylome_revision_targets_filterd %>% 
+  mutate(
+    index = 1:nrow(.)
+  ) %>% 
+  # filter(
+  #   charge == 2
+  # ) %>% 
+  # filter(
+  #   mz > 300 & mz < 1200
+  # ) %>% 
+  # filter(
+  #   !is.na(cleavage_type)
+  # )
+  # select(
+  #   sequence,index
+  # ) %>% 
+  mutate(
+    cys = map(
+      sequence,
+      \(x) str_locate_all(x,"C") %>% deframe() %>% as_tibble
+    )
+  ) %>% 
+  mutate(
+    mod_sites = map_chr(
+      cys,
+      \(x) pull(x, start) %>% paste0(collapse =";")
+    ),
+    mods = str_replace_all(
+      mod_sites,"[0-9]+","Carbamidomethyl@C"
+    )
+  ) %>% 
+  select(-cys) -> table_arginylome_revision_targets_filterd
+  
+  ##ADD PRTC info
+table_arginylome_revision_targets_filterd %>% 
+  bind_rows(
+    tibble(
+      sequence = c(
+        "SSAAPPPPPR",
+        "GISNEGQNASIK",
+        "HVLTSIGEK",
+        "DIPVPKPK",
+        "IGDYAGIK",
+        "TASEFDSAIAQDK",
+        "SAAGAFGPELSR",
+        "ELGQSGVDTYLQTK",
+        "GLILVGGYGTR",
+        "GILFVGSGVSGGEEGAR",
+        "SFANQPLEVVYSK",
+        "LTILEELR",
+        "NGFILDGFPR",
+        "ELASGLSFPVGFK",
+        "LSSEAPALFQFDLK"
+      ),
+      charge = rep(2L,15),
+      gene_position=c(
+        "PRTC01",
+        "PRTC02",
+        "PRTC03",
+        "PRTC04",
+        "PRTC05",
+        "PRTC06",
+        "PRTC07",
+        "PRTC08",
+        "PRTC09",
+        "PRTC10",
+        "PRTC11",
+        "PRTC12",
+        "PRTC13",
+        "PRTC14",
+        "PRTC15"
+      ),
+      index = c(
+        2001:2015
+      ),
+      cleavage_type = c(
+        rep("PRTC",15)
+      ),
+      mz = c(
+        493.7683,
+        613.3167,
+        496.2867,
+        451.2834,
+        422.7364,
+        695.8323,
+        586.8002,
+        773.8955,
+        558.3259,
+        801.4114,
+        745.3924,
+        498.8018,
+        573.3024,
+        680.3735,
+        787.4212
+      )
+    )
+  ) -> table_arginylome_revision_targets_filterd
+
+table_arginylome_revision_targets_filterd %>% 
+  write_tsv(
+    paste0(folder_alphapeptdeep,"input/rt_testing.tsv")
+  )
+  
+```
+
+
+
+#SEARCH w/ FRAGPIPE
+database searching with fragpipe search program.
+
+## converting raw to mzml
+```{r}
+
+system(
+  paste0(
+    'powershell -Command \"',
+    "cd ",
+    folder_raw,
+    "; ",
+    "msconvert",
+    " ",
+    "*.raw",
+    " ",
+    "-c msconvert_config.txt"
+  ),
+  wait =TRUE,
+  invisible = FALSE
+)
+
+```
+
+## Fragpipe run
+```{r}
+
+files_raw <- dir(
+  path = folder_raw,
+  pattern = "mzML"
+)
+
+dir.create(
+  paste0(folder_raw,"search/",project_name,"/")
+)
+
+#MANIFEST
+tibble(
+  file_name = files_raw,
+  experiment = NA,
+  repliceate = NA,
+  type = "DDA"
+) %>% 
+  write_tsv(
+    paste0(folder_raw,"search/",project_name,"/","default.fp-manifest"),
+    na= "",
+    col_names = FALSE
+  )
+
+#COPYING WORKFLOW
+system(
+  paste0(
+    'powershell -Command \"',
+    "cd ",
+    folder_raw,
+    "; ",
+    "Copy-Item ",
+    "-path ",
+    paste0(folder_fragpipe,"workflows/ARGPRM_PRTC.workflow"),
+    " ",
+    "-destination ",
+    ".\\search\\",project_name
+  )
+)
+
+#MOVE SPECTRAL FILES
+system(
+  paste0(
+    'powershell -Command \"',
+    "cd ",
+    folder_raw,
+    "; ",
+    "Move-Item ",
+    "-path ",
+    ".\\*.mzML",
+    " ",
+    "-destination ",
+    ".\\search\\",project_name
+  )
+)
+
+#SEARCH!
+system(
+  paste0(
+    'powershell -Command \"',
+    "cd ",
+    paste0(folder_raw,"search/",project_name,"/"),
+    "; ",
+    fragpipe,
+    " ",
+    "--headless ",
+    "--workflow ",
+    "ARGPRM_PRTC.workflow",
+    " ",
+    "--manifest ",
+    "default.fp-manifest",
+    " ",
+    "--workdir ",
+    paste0(folder_raw,"search/",project_name,"/")
+  ),
+  wait =TRUE,
+  invisible = FALSE
+)
+
+system(
+  paste0(
+    'powershell -Command \"',
+    "cd ",
+    folder_raw,
+    "; ",
+    "Move-Item ",
+    "-path ",
+    ".\\*.raw",
+    " ",
+    "-destination ",
+    paste0(folder_raw,"search/",project_name,"/")
+  )
+)
+
+```
+
+## QC data >> RT training data
+```{r}
+#header: sequence, charge, spec_idx, irt, mods, mod_sites, nAA, rt_norm
+read_tsv(
+  paste0(folder_raw,"search/",project_name,"/","ion.tsv")
+) -> result_qc_ion
+  
+result_qc_ion %>% #colnames()
+  mutate(
+    index = 1:nrow(.)
+  ) %>% 
+  rename(
+    rt = `Apex Retention Time` ## this is target col
+  ) %>% 
+  select(
+    `Peptide Sequence`,Charge,`Peptide Length`,index,rt, `Assigned Modifications`
+  ) %>% 
+  drop_na(
+    rt
+  ) %>% 
+  rename(
+    mods_original = `Assigned Modifications`,
+    sequence = `Peptide Sequence`,
+    charge = Charge,
+    nAA =  `Peptide Length`
+  ) %>% 
+  separate_longer_delim(
+    mods_original, ","
+  ) %>% #distinct(mods_original) %>% print(n=Inf)
+  mutate(
+    mods_res = case_when(
+      str_detect(mods_original,"N\\-")~"Any N-term",
+      .default = str_extract(mods_original,"(?<=[0-9])[AC-IK-Z]")
+    ),
+    mods_name = case_when(
+      str_extract(mods_original,"(?<=\\()[0-9\\.]+(?=\\))") == "15.9949" ~ "Oxidation",
+      str_extract(mods_original,"(?<=\\()[0-9\\.]+(?=\\))") == "57.0215" ~ "Carbamidomethyl",
+      str_extract(mods_original,"(?<=\\()[0-9\\.]+(?=\\))") == "42.0106" ~ "Acetyl",
+      .default = NA
+    )
+  ) %>% #drop_na(mods_original) %>%  view()
+  mutate(
+    mods = if_else(!is.na(mods_res),paste0(mods_name,"@",mods_res),NA),
+    mod_sites = case_when(
+      str_detect(mods_original,"N\\-")~0,
+      .default = as.integer(str_extract(mods_original,"^[0-9]+"))
+    )
+  ) %>% 
+  arrange(
+    index,mod_sites
+  ) %>% 
+  nest(
+    mod = mods_original:mod_sites
+  ) %>% 
+  mutate(
+    mods = map_chr(
+      mod, \(x) paste0(pull(x,mods),collapse = ";")
+    ),
+    mod_sites = map_chr(
+      mod, \(x) paste0(pull(x,mod_sites),collapse = ";")
+    )
+  ) -> table_qc_training
+  
+#header: sequence, charge, spec_idx, irt, mods, mod_sites, nAA, rt_norm
+#6 min system rt
+#gradient start 10 to 65 >> 16 to 71
+table_qc_training %>% 
+  rename(
+    irt = rt
+  ) %>% 
+  mutate(
+    irt = irt/60,
+    mods = na_if(mods, "NA"),
+    mod_sites = na_if(mod_sites, "NA"),
+    rt_norm = (irt-rt_start)/rt_duration
+  ) %>% 
+  filter(
+    rt_norm >= 0
+  )-> table_qc_training
+
+table_qc_training %>% 
+  mutate(
+    sequence = str_replace(sequence,"B$","K"),
+    sequence = str_replace(sequence,"J$","R")
+  ) -> table_qc_training
+
+table_qc_training %>% 
+  select(
+    sequence, charge, index, irt, mods, mod_sites,nAA,rt_norm
+  ) %>% 
+  filter(
+    !(sequence %in% table_prtc$sequence) 
+  )-> table_qc_training_export
+
+table_qc_training %>% 
+  select(
+    sequence, charge, index, irt, mods, mod_sites,nAA,rt_norm
+  )-> table_qc_training_export2
+
+table_qc_training_export %T>% 
+  write_tsv(
+    paste0("./export/natcomm_revision/",project_name,"_training_rt.tsv")
+  ) %>% 
+  write_tsv(
+    paste0(folder_alphapeptdeep,"input/training_rt.tsv")
+  )
+
+table_qc_training_export2 %T>% 
+  write_tsv(
+    paste0("./export/natcomm_revision/",project_name,"_training_rt_for_test.tsv")
+  ) %>% 
+  write_tsv(
+    paste0(folder_alphapeptdeep,"input/training_rt_for_test.tsv")
+  )
+
+table_qc_training %>% 
+  ggplot(
+    aes(x=irt)
+  )+
+  geom_histogram(
+    binwidth = 2,
+    color = "black",
+    fill = "#E41A1C"
+  )+
+  theme_bw()
+ggsave(
+  paste0("./figures/natcomm_revision/rt_training_histogram_",project_name,".png"),width=10,height=10,dpi = 600,units="cm"
+)
+
+```
+
+
+# TRAINING + INCLUSION LIST
+## APD training
+```{r}
+dir.create(
+  paste0(folder_alphapeptdeep,"output/",project_name)
+)
+dir.create(
+  paste0(folder_alphapeptdeep_model,project_name)
+)
+
+c(
+  "import pandas as pd",
+  paste0(
+    "precursor_df = pd.read_table('",
+    paste0(folder_alphapeptdeep,"input/training_rt.tsv"),
+    "',dtype={'mod_sites':'string'})"
+  ),
+  "precursor_df = precursor_df.fillna('')",
+  "precursor_df['mod_sites'] = precursor_df['mod_sites'].astype('string')",
+  "from peptdeep.pretrained_models import *",
+  "model_mgr_rt = ModelManager(mask_modloss=False)",
+  paste0(
+    "model_mgr_rt.load_external_models(rt_model_file ='",
+    folder_alphapeptdeep_model,
+    "generic_v3/rt.pth",
+    "')"
+  ),
+  "model_mgr_rt.epoch_to_train_rt_ccs = 100",
+  "model_mgr_rt.train_rt_model(psm_df=precursor_df)",
+  "output_training_rt_transfer=model_mgr_rt.predict_rt(precursor_df)",
+  paste0(
+    "output_training_rt_transfer.to_csv('",
+    folder_alphapeptdeep,"output/",project_name,"/rt_training_output.csv",
+    "')"
+  ),
+  paste0(
+    "model_mgr_rt.save_models('",
+    folder_alphapeptdeep_model,project_name,"/')"
+  ),
+  paste0(
+    "precursor_df = pd.read_table('",
+    paste0(folder_alphapeptdeep,"input/rt_testing.tsv"),
+    "',dtype={'mod_sites':'string'})"
+  ),
+  "precursor_df = precursor_df.fillna('')",
+  "precursor_df['mod_sites'] = precursor_df['mod_sites'].astype('string')",
+  "from peptdeep.pretrained_models import *",
+  "model_mgr_rt = ModelManager(mask_modloss=False)",
+  paste0(
+    "model_mgr_rt.load_external_models(rt_model_file ='",
+    folder_alphapeptdeep_model,
+    project_name,
+    "/rt.pth",
+    "')"
+  ),
+  "output_prediction_rt=model_mgr_rt.predict_rt(precursor_df)",
+  paste0(
+    "output_prediction_rt.to_csv('",
+    folder_alphapeptdeep,"output/",project_name,"/rt_test_output.csv",
+    "')"
+  )
+) %>% 
+  write(
+    paste0(
+      folder_alphapeptdeep,project_name,".py"
+    )
+  )
+
+script <- paste0(folder_alphapeptdeep,project_name,".py")
+
+system(
+  paste0(
+    'powershell -Command \"',
+    "cd ",folder_alphapeptdeep,"; ",
+    python," ",
+    script
+  ),
+  wait =TRUE,
+  invisible = FALSE
+)
+```
+
+## APD Result Reading:: QC statistics
+<!-- table_qc_training >> table_qc_training_output >> table_qc_training_output_fit -->
+<!-- fit_rt_training: linear model -->
+<!-- table_qc_training_output+fit_rt_training >> table_qc_training_output_fit -->
+<!-- table_qc_training_output_fit >> summary_rtprediction_t95 -->
+<!-- table_qc_training_output_fit >> summary_rtprediction for MAE, RSQ, and RMSE -->
+```{r}
+
+table_qc_training_export %>% 
+  bind_cols(
+    read_csv(
+      paste0(folder_alphapeptdeep,"output/",project_name,"/rt_training_output.csv")
+    ) %>% select(rt_pred)
+  ) %>% 
+  mutate(
+    irt_pred = rt_pred*rt_duration+rt_start
+  ) -> table_qc_training_output
+  
+  
+  
+fit_rt_training <- lm(irt ~ irt_pred, data =table_qc_training_output)
+
+table_qc_training_output %>% 
+  bind_cols(
+    predict(fit_rt_training, interval = "prediction", level =0.95, newdata = table_qc_training_output)
+  ) -> table_qc_training_output_fit
+
+#t95
+table_qc_training_output_fit %>% 
+  mutate(t95=upr-lwr) %>% 
+  summarise(
+    t95_mean = mean(t95)
+  ) -> summary_rtprediction_t95
+  
+##mae rsq rmse
+table_qc_training_output_fit %>% 
+  metrics(
+    truth = irt, estimate = irt_pred
+  ) -> summary_rtprediction
+```
+
+## APD for QC Figure
+<!-- table_qc_training_output_fit >> data_rt_plot -->
+```{r}
+table_qc_training_output_fit %>% 
+  ggplot(aes(x=irt, y=irt_pred))+
+  geom_point(size=0.5,alpha=0.5) +
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=1.2,
+    label=bquote(
+      ~Delta*italic(t)[95*'%'] == .(str_sub(paste0(summary_rtprediction_t95[1,1]),1,5))*","~R^2==.(summary_rtprediction %>% filter(.metric =="rsq") %>% pull(.estimate) %>% round(3))
+    ),size =4
+  )+
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=3.2,
+    label=bquote(
+      ~MAE==.(summary_rtprediction %>% filter(.metric =="mae") %>% pull(.estimate) %>% round(3))*","~N==.(table_qc_training_output %>% nrow())
+    ),size =4
+  )+
+  geom_line(aes(x=lwr), color = "red", linetype = "dashed")+
+  geom_line(aes(x=upr), color = "red", linetype = "dashed")+
+  geom_smooth(method=lm, se=TRUE)+
+  #lims(x=c(0,1),y=c(0,1))+
+  labs(
+    x="Observed RT (min)",
+    y="Predicted RT (min)"
+  )+
+  theme_classic2()+
+  theme(
+    axis.text = element_text(color = "black",size=10),
+    axis.title = element_text(color = "black",size=11)
+  )
+ggsave(
+  paste0("./figures/natcomm_revision/rt_prediction_training_",project_name,".png"),width=10,height=10,dpi = 600,units="cm"
+)
+  
+table_qc_training_output_fit %>% 
+  filter(
+    str_detect(sequence,"^R")
+  ) -> data_rt_plot
+  
+data_rt_plot %>% 
+  ggplot(aes(x=irt, y=irt_pred))+
+  geom_point(size=0.5,alpha=0.5) +
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=1.2,
+    label=bquote(
+      ~Delta*italic(t)[95*'%'] == .(str_sub(paste0(summary_rtprediction_t95[1,1]),1,5))*","~R^2==.(summary_rtprediction %>% filter(.metric =="rsq") %>% pull(.estimate) %>% round(3))
+    ),size =4
+  )+
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=3.2,
+    label=bquote(
+      ~MAE==.(summary_rtprediction %>% filter(.metric =="mae") %>% pull(.estimate) %>% round(3))*","~N==.(data_rt_plot %>% nrow())
+    ),size =4
+  )+
+  geom_line(aes(x=lwr), color = "red", linetype = "dashed")+
+  geom_line(aes(x=upr), color = "red", linetype = "dashed")+
+  #geom_smooth(method=lm, se=TRUE)+
+  #lims(x=c(0,1),y=c(0,1))+
+  labs(
+    x="Observed RT (min)",
+    y="Predicted RT (min)"
+  )+
+  theme_classic2()+
+  theme(
+    axis.text = element_text(color = "black",size=10),
+    axis.title = element_text(color = "black",size=11)
+  )
+ggsave(
+  paste0("./figures/natcomm_revision/rt_prediction_training_arg_",project_name,".png"),width=10,height=10,dpi = 600,units="cm"
+)
+```
+
+## APD Result Reading:: for test set
+<!-- Figures for Target RT histogram, PRTC RT deviation,  -->
+<!-- table_arg_predicted -->
+```{r}
+  ##READ rt prediction ::run every QC
+
+read_csv(
+  paste0(folder_alphapeptdeep,"output/",project_name,"/rt_test_output.csv")
+)->table_arg_predicted
+
+table_arg_predicted %>% 
+  mutate(
+    irt_pred = rt_pred*rt_duration+rt_start
+  ) -> table_arg_predicted
+```
+
+## APD Result Figure:: Targets RT histogram
+<!-- table_arg_predicted -->
+```{r}
+table_arg_predicted %>% 
+  distinct(sequence,.keep_all = TRUE) %>% 
+  ggplot(
+    aes(x=irt_pred)
+  )+
+  geom_histogram(
+    binwidth = 1,
+    color = "black",
+    fill = "#377EB8"
+  )+
+  theme_bw()
+ggsave(
+  paste0("./figures/natcomm_revision/arg_prediction_histogram_",project_name,".png"),width=10,height=10,dpi = 600,units="cm"
+)
+```
+
+## APD Result Figure:: PRTC RT deviations
+<!-- table_arg_predicted -->
+```{r}
+table_arg_predicted %>% 
+  filter(cleavage_type=="PRTC") %>% 
+  select(
+    gene_position,irt_pred
+  ) %>% 
+  left_join(
+    table_qc_training %>% 
+      filter(
+        sequence %in% table_prtc$sequence
+      ) %>% 
+      left_join(
+        table_prtc %>% select(sequence,gene_position)
+      ) %>% 
+      select(
+        gene_position, irt
+      )
+  ) %>% 
+  mutate(
+    irt_irt_pred=irt-irt_pred
+  ) %>% 
+  ggplot(
+    aes(x=gene_position, y=irt_irt_pred)
+  )+
+  geom_bar(
+    stat= "identity"
+  )+
+  labs(x="PRTC",y="Observed RT - Predicted RT")+
+  theme_bw()+
+  theme(
+    axis.text = element_text(color="black"),
+    axis.text.x = element_text(angle=45,hjust =1),
+  )
+ggsave(
+  paste0("./figures/natcomm_revision/rt_prediction_prtc_",project_name,".png"),width=20,height=10,dpi = 600,units="cm"
+)
+```
+
+## Writing Inclusion List
+<!-- table_arg_predicted >> inclusionlist.csv -->
+<!-- time window = +_5 >> -2 to +8 -->
+```{r}
+##write inclusion list ##target type arg 240406
+table_arg_predicted %>% 
+  mutate(
+    gene_position = paste0(gene_position,"|L")
+  ) %>% 
+  bind_rows(
+    table_arg_predicted %>% 
+      filter(
+        !str_detect(gene_position,"PRTC")
+      ) %>% 
+      mutate(
+        r_count = str_count(sequence,"R"),
+        r_heavy_mass = 6.020129*r_count/charge,
+        mz = mz + r_heavy_mass,
+        gene_position = paste0(gene_position,"|H")
+      )
+  ) -> table_arg_predicted_final
+  # mutate(
+  #   passed = case_when(
+  #     target_type == "arg" & charge == 3 ~ TRUE,
+  #     target_type == "free" & charge == 2 ~ TRUE,
+  #     .default = FALSE
+  #   )
+  # ) %>% 
+  # filter(
+  #   (passed == TRUE & cleavage_type %in% c("SP","mTP")) |
+  #     (passed == TRUE & gene_position %in% vector_nucleus_arg)|
+  #     (passed == TRUE & str_detect(cleavage_type,"C14")) |
+  #     str_detect(gene_position,"PRTC")|
+  #     (passed == TRUE & gene_position %in% vector_upr_protein)
+  # ) %>% #view()
+
+table_arg_predicted_final %>% 
+  mutate(
+    mz = round(mz,4)
+  ) %>% 
+  mutate(
+    Comment = paste0(gene_position,"_",sequence,"_",charge)
+  ) %>% 
+  distinct(Comment,.keep_all = TRUE) %>% 
+  select(
+    mz,
+    irt_pred,
+    charge,
+    Comment
+  ) %>% 
+  mutate(
+    mz= as.character(mz),
+    lwr = as.character(round(irt_pred,2)-2),
+    upr = as.character(round(irt_pred,2)+8)
+  ) %>% 
+  rename(
+    `Mass [m/z]` = mz,
+    `Start [min]` = lwr,
+    `End [min]` = upr
+  ) %>% 
+  mutate(
+    `Formula [M]` = "",
+    `Formula type` = "",
+    `Species` = "",
+    `CS [z]` = as.character(charge),
+    Polarity = "Positive",
+    `(N)CE` = "",
+    `(N)CE type` = "",
+    `MSX ID` = ""
+  ) %>% 
+  select(
+    `Mass [m/z]`,
+    `Formula [M]`,
+    `Formula type`,
+    `Species`,
+    `CS [z]`,
+    Polarity,
+    `Start [min]`,
+    `End [min]`,
+    `(N)CE`,
+    `(N)CE type`,
+    `MSX ID`,
+    Comment
+  ) %>% 
+  write_csv(
+    paste0("./inclusionlist/incl_",project_name,".csv")
+  )
+
+```
+
+
+
