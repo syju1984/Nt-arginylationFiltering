@@ -44,7 +44,7 @@ conda activate ntarg-py
 
 # R (install packages)
 R -e "install.packages(c('tidyverse','rmarkdown','ggpubr','rstatix','ggseqlogo','readxl','yaml'))"
-
+```
 ---
 
 ## Core workflow
@@ -60,7 +60,6 @@ R -e "install.packages(c('tidyverse','rmarkdown','ggpubr','rstatix','ggseqlogo',
 
 ---
 ## Auxillary workflow
-
 For discovery part, 
 Discovery/1Analysis_240711.R :: contains R codes for data read, transformation, figure generation.
 Discovery/2Figures.R :: contains R codes mainly additional figures.
@@ -76,7 +75,6 @@ For AlphaPeptDeep
 AlphaPeptDeep/Models: contains the models created in this study. generic is the pretrained model.
 AlphaPeptDeep/training_inputs: contains input data for finetuning
 AlphaPeptDeep/training_outputs : contains output data of finetuning using AlphaPeptDeep.
-
 
 
 code re-run was successful in the session:
