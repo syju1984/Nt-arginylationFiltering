@@ -1,0 +1,2136 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+#Libraries
+```{r}
+library(tidyverse)
+library(devtools)
+library(Biostrings)
+library(Peptides)
+library(ggpubr)
+library(RColorBrewer)
+library(ggseqlogo)
+library(dagLogo)
+library(wesanderson)
+library(Rdisop)
+library(conflicted)
+library(broom)
+library(OrgMassSpecR) 
+library(scales)
+conflict_scout()
+conflicts_prefer(dplyr::filter())
+conflicts_prefer(dplyr::select())
+conflicts_prefer(dplyr::rename())
+conflicts_prefer(dplyr::first())
+conflicts_prefer(dplyr::desc())
+source("G:/Rcheatsheet/functions/FragmentPeptide3.R")
+library(tidymodels)
+library(ComplexHeatmap)
+library(ggpointdensity)
+library(viridis)
+library(ggVennDiagram)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+Sys.setenv(R_LIBCURL_SSL_REVOKE_BEST_EFFORT=TRUE)
+library(ReactomePA)
+library(rrvgo)
+library(UniProtKeywords)
+library(org.Hs.eg.db)
+library(ggrepel)
+```
+
+#Vectors
+```{r}
+summaryfolder<-"./Summary/"
+peptidefile <- "200821_HELA_MGTG_iNrich_bRP_F_PeptideGroups.txt"
+psmfile <- "200821_HELA_MGTG_iNrich_bRP_F_PSMs.txt"
+msmsfile <- "200821_HELA_MGTG_iNrich_bRP_F_MSMSSpectrumInfo.txt"
+```
+
+#Make up protein Database
+```{r}
+####DB collection
+dbfile <- paste0(summaryfolder,"UP000005640_9606_2302.fasta")
+readAAStringSet(dbfile)->db1 ##Biostrings package
+protein = names(db1)
+sequence = paste(db1)
+data.frame(protein,sequence)->dbtable
+rm(db1)
+dbtable %>% mutate(
+  accession = str_extract(protein,"(?<=\\|).+(?=\\|)")
+) -> dbtable ##db extraction of accession
+dbtable %>% mutate(
+  gene = str_extract(protein,"(?<=GN\\=)[a-zA-Z0-9\\-]+")
+) %>% 
+  mutate(
+    prot_name = str_extract(protein,"[A-Z0-9]+\\_HUMAN")
+  )-> dbtable ##db extraction of gene
+
+
+
+####DB collection
+dbfile_1 <- paste0("./db/UP000005640_9606_2302.fasta")
+dbfile_2 <- paste0("./db/UP000005640_9606_2302_additional.fasta")
+readAAStringSet(dbfile_1)->db1 ##Biostrings package
+protein = names(db1)
+sequence = paste(db1)
+data.frame(protein,sequence)->dbtable1
+readAAStringSet(dbfile_2)->db2 ##Biostrings package
+protein = names(db2)
+sequence = paste(db2)
+data.frame(protein,sequence)->dbtable2
+bind_rows(dbtable1,dbtable2) -> dbtable_all
+rm(db1,db2)
+
+
+dbtable_all %>% 
+  mutate(
+    accession = str_extract(protein,"(?<=\\|).+(?=\\|)")
+  ) %>% mutate(
+    gene = str_extract(protein,"(?<=GN\\=)[a-zA-Z0-9\\-]+")
+  ) %>% 
+  mutate(
+    prot_name = str_extract(protein,"[A-Z0-9]+\\_HUMAN")
+  ) -> dbtable_all ##db extraction of gene
+  
+  rm(dbtable1,dbtable2)
+```
+
+#PD output: read peptide result
+output object: summaryfile
+```{r}
+###Read peptide file
+  read_tsv(paste0(summaryfolder,peptidefile)) -> summaryfile
+  
+  summaryfile %>% distinct(Sequence,Modifications) ## check seq+mod uniqueness 
+  
+  ##N-term peps:: deconvolution of protein accessions 220407
+  summaryfile %>% 
+    separate_rows(.,`Positions in Master Proteins`,sep = "; ") -> summaryfile ##deconvolution of accessions
+  
+  summaryfile %>% 
+    arrange(Sequence,Modifications,`Positions in Master Proteins`) -> summaryfile #sort by postion with increasing order
+  
+  summaryfile %>%
+    distinct(Sequence,Modifications, .keep_all = TRUE) -> summaryfile #delete redundant pep+mod
+  
+  
+  ##protein accession, separate first only ## deprecated 220407
+  ##summaryfile %>% separate(`Master Protein Accessions`,into="Accessions.Single",sep=";",remove=FALSE)-> summaryfile ###delimiter
+  
+  ##protein position
+  #summaryfile %>% separate(`Positions in Master Proteins`, into="Position", sep=";", remove=FALSE)-> summaryfile ###Position string extraction
+  
+  ##protein position string
+  summaryfile %>% mutate(Accessions.Single = str_extract(`Positions in Master Proteins`, "[a-zA-Z0-9]+(?=[:blank:])")) %>%
+    mutate(Position.start = str_extract(`Positions in Master Proteins`,"[0-9]+\\-[0-9]+")) %>% 
+    separate(`Position.start`, into=c("Position.start","Position.end"), sep="-", remove=FALSE, convert=TRUE)->summaryfile ###position number extraction
+  
+  ##nmod start
+  summaryfile %>% mutate(nmod = str_extract(Modifications,"1x[a-zA-Z0-9\\>\\:\\-\\(\\)\\+]+ \\[N\\-Term\\]"))->summaryfile ###nmod extraction
+  summaryfile %>% mutate(nmod = gsub("1xAcetyl [N-Term]","Acetyl", nmod, fixed=TRUE)) %>%
+    mutate(nmod = gsub("1xAcetyl:2H(3) [N-Term]","D3Acetyl", nmod, fixed=TRUE)) %>% 
+    mutate(nmod = gsub("1xGlu->pyro-Glu [N-Term]","pyroGlu", nmod, fixed=TRUE)) %>%
+    #mutate(nmod = gsub("1xMet-loss+AcetylD3 [N-Term]","MetLossD3Acetyl", nmod, fixed=TRUE)) %>%
+    mutate(nmod = gsub("1xArgAcetylD3 [N-Term]","D3AcetylArg", nmod, fixed=TRUE)) %>%
+    mutate(nmod = gsub("1xArgAcetylD3NQ [N-Term]","D3AcetylArgDeamid", nmod, fixed=TRUE)) ->summaryfile ##unique(summaryfiletemp$nmod) ## simplifying nmods
+  #mutate(nmod = gsub("1xMet-LossArgAcD3NQ [N-Term]","MetLossD3AcetylArgDeamid", nmod, fixed=TRUE)) %>%
+  #mutate(nmod = gsub("1xMet-lossArgAcD3 [N-Term]","MetLossD3AcetylArg", nmod, fixed=TRUE)) %>%
+  #mutate(nmod = gsub("1xMet-loss [N-Term]",NA, nmod, fixed=TRUE))
+  
+  
+  ##filter contaminant & peptide without reference
+  summaryfile %>% 
+    dplyr::filter(Contaminant == FALSE) %>%
+    dplyr::filter(!is.na(`Master Protein Accessions`)) -> summaryfile
+  
+  ### db integration 
+  left_join(
+    summaryfile,dbtable,by=c("Accessions.Single"="accession")
+  ) ->summaryfile ##db integration
+  
+  ### XXX addition
+  summaryfile %>% 
+    mutate(
+      sequence2 = paste0("XXXXX",sequence)
+    ) %>%
+    mutate(
+      p5p1 = str_sub(sequence2,Position.start,Position.start+4)
+    ) ->summaryfile
+```
+
+#PD output: read PSM result, Mod annotations
+output object: summaryfile_psm, summaryfile_psm_arg
+```{r}
+read_tsv(paste0(summaryfolder,psmfile)) -> summaryfile_psm
+summaryfile_psm %>% 
+  mutate(
+    index = seq(1:nrow(summaryfile_psm))
+  ) %>% 
+  separate(`Master Protein Accessions`,into="Accessions_Single",sep=";",remove=FALSE) %>% 
+  mutate(
+    nmod = str_extract(
+      Modifications,
+      "N\\-Term[a-zA-Z0-9\\>\\:\\-\\(\\)\\+]+"
+    )
+  )->summaryfile_psm ###nmod extraction
+
+summaryfile_psm %>% mutate(
+  nmod = gsub("N-Term(Acetyl)","Acetyl", nmod, fixed=TRUE)
+) %>% mutate(
+  nmod = gsub("N-Term(Acetyl:2H(3))","D3Acetyl", nmod, fixed=TRUE)
+) %>% mutate(
+  nmod = gsub("N-Term(Glu->pyro-Glu)","pyroGlu", nmod, fixed=TRUE)
+) %>% mutate(
+  nmod = gsub("N-Term(ArgAcetylD3)","D3AcetylArg", nmod, fixed=TRUE)
+) %>% mutate(
+  nmod = gsub("N-Term(ArgAcetylD3NQ)","D3AcetylArgDeamid", nmod, fixed=TRUE)
+) ->summaryfile_psm ##unique(summaryfiletemp$nmod) ## simplifying nmods
+
+summaryfile_psm %>% 
+  select(
+    `File ID`,`Spectrum File`
+  ) %>% distinct()->file_raw_index
+
+file_raw_index %>% 
+  mutate(
+    set = str_extract(`File ID`,"^[A-Z0-9]+(?=\\.)")
+  ) %>% 
+  mutate(
+    fraction = str_extract(`File ID`,"(?<=\\.)[A-Z0-9]+") %>% as.integer()
+  ) %>% 
+  mutate(
+    file_name = str_extract(`Spectrum File`,".+(?=.{6}$)")
+  ) -> file_raw_index
+
+file_raw_index %>% 
+  distinct(set,file_name) %>% 
+  bind_cols(
+    tibble(
+      experiment = c("MGTG","MOCK","MOCK","MG132","MGTG","MG132","MGTG","MOCK","MOCK","MG132","MGTG","MG132")
+    )
+  ) %>% 
+  bind_cols(
+    tibble(
+      replicate = c("1ST","1ST","2ND","2ND","2ND","1ST","1ST","1ST","2ND","2ND","2ND","1ST")
+    )
+  ) %>% 
+  bind_cols(
+    tibble(
+      enzyme = c("trypsin","trypsin","trypsin","trypsin","trypsin","trypsin","chymotrypsin","chymotrypsin","chymotrypsin","chymotrypsin","chymotrypsin","chymotrypsin")
+    )
+  ) -> file_raw_index2
+  
+file_raw_index %>% 
+  left_join(
+    file_raw_index2,
+    join_by(
+      set==set,
+      file_name == file_name
+    )
+  ) %>% 
+  select(
+    -c(`Spectrum File`,file_name)
+  ) ->file_raw_index
+
+summaryfile_psm %>% 
+  left_join(
+    file_raw_index,
+    join_by(
+      `File ID` ==`File ID`
+    )
+  ) -> summaryfile_psm
+rm(file_raw_index2)
+
+##make arginylation column
+summaryfile_psm %>% mutate(
+  arginylation = ifelse(
+    grepl("Arg", nmod),
+    TRUE,
+    FALSE
+  )
+) -> summaryfile_psm
+
+summaryfile_psm %>% 
+  mutate(
+    start_with_R = if_else(str_detect(Sequence,"^R"),1,0)
+  ) -> summaryfile_psm
+
+summaryfile_psm %>% 
+  dplyr::filter(
+    arginylation == TRUE
+  ) -> summaryfile_psm_arg
+```
+
+#Annotations: possible positions for the peptide sequences 
+output object: arginylated_peptides_all, reposition_arg, reposition_arg_no_dups
+```{r}
+summaryfile %>% 
+    dplyr::filter(arginylation == TRUE) -> summaryfile_arg
+  
+  summaryfile_psm %>% dplyr::filter(arginylation==TRUE) %>% .$Sequence %>% unique -> arginylated_peptides_all
+  
+tibble(
+  seq = arginylated_peptides_all
+) %>% 
+  mutate(
+    protein = map(seq,\(x) dbtable_all %>% dplyr::filter(str_detect(sequence,x)),.progress=TRUE)
+  ) %>% 
+  unnest(protein) %>% 
+  mutate(
+    position = str_locate(sequence,seq)[,"start"]
+  ) %>% 
+  arrange(
+    seq,position
+  )  %>% 
+  mutate(
+    sequence2=paste0("XXXXX",sequence)
+  ) %>% 
+  mutate(
+    p5p1 = str_sub(sequence2,start=position,end=position+4)
+  ) %>% 
+  mutate(
+    reviewed = str_sub(protein,start=1,end=2)
+  ) %>% 
+  mutate(
+    under100 = if_else(
+      position <= 100, 1,0
+    )
+  ) %>% 
+  arrange(
+    seq,desc(under100),reviewed,position,accession
+  ) %>% 
+  mutate(
+    count = n(),.by=seq
+  ) ->reposition_arg
+reposition_arg %>% 
+  nest(
+    .by=seq
+  ) %>% 
+  mutate(
+    data = map(data,\(x) slice_head(x,n=1))
+  ) %>% 
+  unnest(data)->reposition_arg_no_dups
+  
+  
+  reposition_arg %>%
+    select(-c(sequence,sequence2)) %>% 
+    write_tsv("reposition_arg.tsv")
+  reposition_arg_no_dups %>%
+    select(-c(sequence,sequence2)) %>% 
+    write_tsv("reposition_arg_no_dups.tsv")
+```
+
+#Training data conversion
+##Strings handling from PSM files
+output object: summaryfile_psm_for_training
+```{r}
+summaryfile_psm %>% 
+  dplyr::filter(start_with_R==1) %>%
+  #dplyr::filter(enzyme == "trypsin") %>% for trypsin only
+  #dplyr::filter(specfile %in% c("220621_E_1","220621_E_2","220621_E_3")) %>% for single set only
+  dplyr::filter(nmod=="D3Acetyl") -> summaryfile_psm_for_training
+
+
+summaryfile_psm_for_training %>%   
+  mutate(index=1:nrow(.)) %>% 
+  separate_longer_delim(Modifications, delim="; ") %>% 
+  mutate(
+    mods_aa = case_when(
+      str_detect(Modifications,"^N\\-Term")~"Any N-term",
+      str_detect(Modifications,"^[A-Z]")~str_extract(Modifications,"^[A-Z]"),
+      .default = Modifications
+    )
+  ) %>% 
+  mutate(
+    mods_name = case_when(
+      str_detect(Modifications,"Acetyl\\)")~"Acetyl",
+      str_detect(Modifications,"Acetyl\\:2H\\(3\\)")~"Acetyl:2H(3)",
+      str_detect(Modifications,"Oxidation")~"Oxidation",
+      str_detect(Modifications,"Carbamidomethyl")~"Carbamidomethyl",
+      .default = Modifications
+    )
+  ) %>% 
+  mutate(
+    mod_sites = case_when(
+      str_detect(Modifications,"^N\\-Term")~"0",
+      str_detect(Modifications,"^[A-Z]")~str_extract(Modifications,"(?<=^[A-Z])[0-9]+"),
+      .default = Modifications
+    )
+  ) %>% 
+  nest(nestedcol = c(Modifications,mods_name,mods_aa,mod_sites)) %>% 
+  mutate(
+    Modifications = map_chr(nestedcol,\(x) x$Modifications %>% paste(collapse = ";"))
+  ) %>% 
+  mutate(
+    mods = map_chr(nestedcol,\(x) unite(data = x, col = mods, c(mods_name,mods_aa),sep ="@") %>% .$mods %>% paste(collapse = ";"))
+  ) %>% 
+  mutate(
+    mod_sites = map_chr(nestedcol,\(x) x$mod_sites %>% paste(collapse = ";"))
+  )%>% 
+  mutate(
+    nAA = str_length(Sequence),
+    nce = as.integer(27),
+    instrument = "QE",
+    charge = as.integer(Charge)
+  )-> summaryfile_psm_for_training
+```
+
+##Reading PSM annotations output from Proteome Discoverer
+output object: file_index
+```{r}
+folder_pdspectra <- "./annotation_psm/200821_HELA_MGTG_iNrich_bRP_F_startR/"
+  ##read xml
+  xml2::read_html(
+    paste0(folder_pdspectra,"index.html")
+  ) -> file_index
+  #from xml object read table
+  rvest::html_table(
+    file_index,
+    header = TRUE
+  ) ->file_index
+  
+  ##table trimming
+  file_index[[1]] -> file_index #unlist
+  file_index[seq(1,nrow(file_index),by=2),seq(2,ncol(file_index),by=2)] -> file_index ## delete unnessary cols and rows
+  colnames(file_index)<- as.vector(file_index[1,]) %>% unlist ## colnames
+  file_index[c(-1),] -> file_index
+  
+  #peak list handling
+  readLines(paste0(folder_pdspectra,"index.html"))-> file_index_lines
+  
+  ##add column of peak list
+  file_index %>% 
+    bind_cols(tibble(peak_file = str_extract(file_index_lines[str_detect(file_index_lines,"Peak List")],"data\\/.+\\.txt"))) -> file_index
+  
+  file_index %>% 
+    mutate(
+      peak_table = map(
+        peak_file,\(x) read_tsv(paste0(folder_pdspectra,x),show_col_types = FALSE), .progress = TRUE
+      )
+    )->file_index2
+  file_index2->file_index
+  rm(file_index2)
+  file_index %>% 
+    mutate(
+      peak_table_dropna = map(
+        peak_table,\(x) drop_na(x)
+      )
+    ) -> file_index
+  #### peak_table_dropna_relative intensity!
+  file_index %>% 
+    mutate(
+      peak_table_dropna_wo_modloss = map(peak_table_dropna,\(x) dplyr::filter(x,!str_detect(matches,"NH3|Ox|H2O")))
+    ) %>% 
+    mutate(
+      peak_table_dropna_wo_modloss = map(peak_table_dropna_wo_modloss, \(x) mutate(x,i_relative=i/max(i)))
+    ) -> file_index
+```
+
+##PSM annotations into fragment intensity table 
+output object: file_index3, file_index4
+```{r}
+file_index %>% 
+  mutate(
+    peak_table_alpha_ms2= map(peak_table_dropna_wo_modloss,\(x) mutate(x, series = str_extract(matches,"b|y")))
+  ) %>% 
+  mutate(
+    peak_table_alpha_ms2= map(
+      peak_table_alpha_ms2,
+      \(x) mutate(x, ion_num = as.integer(str_extract(matches,"(?<=\\()[0-9]+(?=\\))")))
+    )
+  ) %>%
+  mutate(
+    peak_table_alpha_ms2= map(
+      peak_table_alpha_ms2,
+      \(x) mutate(x, charge = as.integer(str_extract(matches,"(?<=\\()[0-9]+(?=\\+\\))")))
+    )
+  ) %>% 
+  mutate(
+    peak_table_alpha_ms2 = map(
+      peak_table_alpha_ms2,
+      \(x) dplyr::filter(x, charge<=2)
+    )
+  ) %>% 
+  mutate(
+    peak_table_alpha_ms2 = map(peak_table_alpha_ms2, \(x) mutate(x,i_relative=i/max(i)))
+  ) %>% 
+  mutate(
+    strip_seq=str_to_upper(str_extract(Sequence,"(?<=\\.)[:alpha:]+(?=\\.)"))
+  ) %>% 
+  mutate(
+    seq_len = str_length(strip_seq)
+  ) %>% 
+  mutate(
+    peak_table_alpha_ms2 = map2(
+      peak_table_alpha_ms2,
+      seq_len,
+      \(x,y) mutate(x,seq_len = y)
+    )
+  ) %>% 
+  mutate(
+    peak_table_alpha_ms2 = map(
+      peak_table_alpha_ms2,
+      \(x) mutate(x,ion_num2 = if_else(series == "y",seq_len - ion_num,ion_num))
+    )
+  )%>%
+  mutate(
+    peak_table_alpha_ms2 = map(
+      peak_table_alpha_ms2,
+      \(x) mutate(x,alpha_col = str_c(series,"_","z",charge))
+    )
+  ) %>% 
+  mutate(
+    fragment_inten_df = map(
+      peak_table_alpha_ms2,
+      \(x) pivot_wider(x,id_cols = ion_num2,names_from = alpha_col,values_from = i_relative)
+    )
+  ) %>% 
+  mutate(
+    fragment_inten_df2 = map(seq_len,\(x) tibble(ion_num2=seq(1,x-1)))
+  ) %>% 
+  mutate(
+    fragment_inten_df3 = map2(
+      fragment_inten_df,
+      fragment_inten_df2,
+      \(x,y) full_join(x,y,by=c("ion_num2"="ion_num2"))
+    )
+  )-> file_index3
+
+colnames(file_index3)
+colnames(file_index3)[16] <-"scan_num"
+colnames(file_index3)
+file_index3 %>% 
+  mutate(
+    scan_num = as.integer(scan_num)
+  ) %>% 
+  mutate(
+    charge = as.integer(Charge)
+  ) %>% 
+  mutate(
+    XCorr = as.numeric(XCorr)
+  ) %>% 
+  mutate(
+    `Percolator SVMScore` = as.numeric(`Percolator SVMScore`)
+  ) ->file_index3
+
+file_index3 %>% 
+  mutate(
+    Modifications = str_replace_all(Modifications,"[:blank:]","")
+  ) -> file_index3
+
+file_index3 %>% 
+  distinct(
+    strip_seq,scan_num,charge,XCorr,
+    .keep_all = TRUE
+  ) -> file_index3
+
+file_index3 %>% 
+  unnest(fragment_inten_df3) %>% 
+  dplyr::rename(percol_svm = `Percolator SVMScore`) %>% 
+  select(strip_seq,Modifications,scan_num,XCorr,percol_svm,charge,ion_num2,b_z1,b_z2,y_z1,y_z2) %>%
+  mutate(
+    across(
+      .cols = c(b_z1,b_z2,y_z1,y_z2),
+      .fns = \(x) if_else(is.na(x),0,x)
+    )
+  ) -> file_index4
+##now strip_seq + scan_num + XCorr + charge
+```
+
+##Training data export for AlphaPeptDeep inputs
+output object: summaryfile_psm_for_training2, summaryfile_psm_for_training3, summaryfile_psm_for_training4, 
+output files: precursor_df.tsv, frag_intensity_df.tsv
+```{r}
+# summaryfile_psm_for_training %>% 
+  #   select(Sequence,nAA) %>% print(n=Inf)
+  summaryfile_psm_for_training %>% 
+    select(-c(nestedcol)) %>% 
+    mutate(
+      scan_num = as.integer(`First Scan`)
+    ) %>% distinct(
+      Sequence,scan_num,charge,XCorr,
+      .keep_all = TRUE
+    ) %>% 
+    inner_join(
+      file_index4,
+      by=join_by(
+        Sequence == strip_seq,
+        scan_num==scan_num,
+        charge==charge,
+        XCorr==XCorr
+      )
+    ) ->summaryfile_psm_for_training2
+  # summaryfile_psm_for_training2 %>% 
+  #   select(Sequence,nAA) %>% dplyr::filter(nAA==7) %>% print(n=Inf)
+  summaryfile_psm_for_training2 %>% 
+    arrange(
+      index,ion_num2
+    ) %>% 
+    mutate(
+      frag_index = seq(0,nrow(summaryfile_psm_for_training2)-1)
+    ) %>%
+    nest(frag_df= c(frag_index,ion_num2,b_z1,b_z2,y_z1,y_z2)) -> summaryfile_psm_for_training3 
+  
+  
+  # ###summaryfile_psm_for_training3 is the final table ##dont change it!
+  summaryfile_psm_for_training3 %>% 
+    mutate(
+      index= seq(1,nrow(summaryfile_psm_for_training3))
+    ) %>% 
+    mutate(
+      frag_start_idx = map_dbl(frag_df,\(x) min(x$frag_index))
+    ) %>% 
+    mutate(
+      frag_stop_idx = map_dbl(frag_df,\(x) max(x$frag_index)+1)
+    ) %>% 
+    dplyr::rename(
+      spec_idx = index,
+      irt = `RT in min` 
+    ) %>% 
+    select(
+      Sequence,charge,spec_idx,irt,mods,mod_sites,nAA,frag_start_idx,frag_stop_idx,nce,instrument
+    ) %>% 
+    dplyr::rename(
+      sequence = Sequence
+    ) -> summaryfile_psm_for_training4
+  summaryfile_psm_for_training4 %>% 
+    write_tsv(
+      "C:/Users/admin/alphapeptdeep/project/folder/alphapeptdeep/precursor_df.tsv"
+    )
+  ### create frag_intensity_df
+  summaryfile_psm_for_training3 %>% 
+    select(frag_df) %>% 
+    unnest(frag_df) %>% 
+    select(
+      b_z1,b_z2,y_z1,y_z2
+    ) %>% 
+    write_tsv(
+      "C:/Users/admin/alphapeptdeep/project/folder/alphapeptdeep/frag_intensity_df.tsv"
+    )
+```
+
+# Training set
+## Retry: New training set data using full enzymatic search
+output object: psm_563516, psm_311547_trypsin, psm_251969_chymo
+```{r}
+readRDS("./export/psm_563516.rds") -> psm_563516
+
+psm_563516 %>% 
+  filter(
+    enzyme == "trypsin"
+  ) -> psm_311547_trypsin
+
+psm_563516 %>% 
+  filter(
+    enzyme == "chymotrypsin"
+  ) -> psm_251969_chymo
+```
+
+## Training set for trypsin
+output file: precursor_df_311547.tsv, precursor_df_311547_fragdf.tsv
+```{r}
+psm_311547_trypsin %>% 
+  unnest(fragment_inten_df3) %>% 
+  arrange(
+    index,ion_num2
+  ) %>% 
+  mutate(
+    frag_index = seq(0,nrow(.)-1)
+  ) %>% 
+  nest(frag_df= c(frag_index,ion_num2,b_z1,b_z2,y_z1,y_z2)) %>% 
+  mutate(
+    frag_start_idx = map_dbl(frag_df,\(x) min(x$frag_index))
+  ) %>% 
+  mutate(
+    frag_stop_idx = map_dbl(frag_df,\(x) max(x$frag_index)+1)
+  ) %>% 
+  dplyr::rename(
+    spec_idx = index,
+    irt = `RT in min`,
+    sequence = strip_seq
+  ) -> psm_311547_trypsin
+
+psm_311547_trypsin %>% 
+  select(
+    sequence,charge,spec_idx,mods,mod_sites,nAA,frag_start_idx,frag_stop_idx,nce,instrument
+  ) %>% 
+  write_tsv(
+    "C:/Users/admin/alphapeptdeep/project/folder/alphapeptdeep/precursor_df_311547.tsv"
+  )
+psm_311547_trypsin %>% 
+  select(frag_df) %>% 
+  unnest(frag_df) %>% 
+  select(
+    b_z1,b_z2,y_z1,y_z2
+  ) %>% 
+  mutate(
+    across(everything(),\(x) replace_na(x,0))
+  ) %>% 
+  write_tsv(
+    "C:/Users/admin/alphapeptdeep/project/folder/alphapeptdeep/precursor_df_311547_fragdf.tsv"
+  )
+```
+
+## Training set for chymotrypsin
+output file: psm_251969_chymo.tsv, psm_251969_chymo_fragdf.tsv
+```{r}
+psm_251969_chymo %>% 
+  unnest(fragment_inten_df3) %>% 
+  arrange(
+    index,ion_num2
+  ) %>% 
+  mutate(
+    frag_index = seq(0,nrow(.)-1)
+  ) %>% 
+  nest(frag_df= c(frag_index,ion_num2,b_z1,b_z2,y_z1,y_z2)) %>% 
+  mutate(
+    frag_start_idx = map_dbl(frag_df,\(x) min(x$frag_index))
+  ) %>% 
+  mutate(
+    frag_stop_idx = map_dbl(frag_df,\(x) max(x$frag_index)+1)
+  ) %>% 
+  dplyr::rename(
+    spec_idx = index,
+    irt = `RT in min`,
+    sequence = strip_seq
+  ) -> psm_251969_chymo
+
+psm_251969_chymo %>% 
+  select(
+    sequence,charge,spec_idx,mods,mod_sites,nAA,frag_start_idx,frag_stop_idx,nce,instrument
+  ) %>% 
+  write_tsv(
+    "C:/Users/admin/alphapeptdeep/project/folder/alphapeptdeep/psm_251969_chymo.tsv"
+  )
+psm_251969_chymo %>% 
+  select(frag_df) %>% 
+  unnest(frag_df) %>% 
+  select(
+    b_z1,b_z2,y_z1,y_z2
+  ) %>% 
+  mutate(
+    across(everything(),\(x) replace_na(x,0))
+  ) %>% 
+  write_tsv(
+    "C:/Users/admin/alphapeptdeep/project/folder/alphapeptdeep/psm_251969_chymo_fragdf.tsv"
+  )
+```
+
+
+#Test set for prediciton
+## Making up Nt-arg Data to predict 
+output object: summaryfile_psm_for_testing
+output files: input_testing.tsv
+```{r}
+summaryfile_psm %>% 
+    dplyr::filter(
+      arginylation == TRUE
+    ) -> summaryfile_psm_for_testing
+  
+  
+  summaryfile_psm_for_testing %>%   
+    mutate(index=1:nrow(.)) %>% 
+    separate_longer_delim(Modifications, delim="; ") %>% 
+    mutate(
+      mods_aa = case_when(
+        str_detect(Modifications,"^N\\-Term")~"Any N-term",
+        str_detect(Modifications,"^[A-Z]")~str_extract(Modifications,"^[A-Z]"),
+        .default = Modifications
+      )
+    ) %>% 
+    mutate(
+      mods_name = case_when(
+        str_detect(Modifications,"Acetyl\\)")~"Acetyl",
+        str_detect(Modifications,"Acetyl\\:2H\\(3\\)")~"Acetyl:2H(3)",
+        str_detect(Modifications,"Oxidation")~"Oxidation",
+        str_detect(Modifications,"Carbamidomethyl")~"Carbamidomethyl",
+        .default = Modifications
+      )
+    ) %>% 
+    mutate(
+      mod_sites = case_when(
+        str_detect(Modifications,"^N\\-Term")~"0",
+        str_detect(Modifications,"^[A-Z]")~str_extract(Modifications,"(?<=^[A-Z])[0-9]+"),
+        .default = Modifications
+      )
+    ) %>% 
+    nest(nestedcol = c(Modifications,mods_name,mods_aa,mod_sites)) %>% 
+    mutate(
+      Modifications = map_chr(nestedcol,\(x) x$Modifications %>% paste(collapse = ";"))
+    ) %>% 
+    mutate(
+      mods = map_chr(nestedcol,\(x) unite(data = x, col = mods, c(mods_name,mods_aa),sep ="@") %>% .$mods %>% paste(collapse = ";"))
+    ) %>% 
+    mutate(
+      mod_sites = map_chr(nestedcol,\(x) x$mod_sites %>% paste(collapse = ";"))
+    )%>% 
+    mutate(
+      nAA = str_length(Sequence),
+      nce = as.integer(27),
+      instrument = "QE",
+      charge = as.integer(Charge)
+    )-> summaryfile_psm_for_testing
+  summaryfile_psm_for_testing %>% 
+    separate_rows(mod_sites,sep=";") %>% 
+    mutate(
+      mod_sites = as.integer(mod_sites)
+    ) %>%
+    mutate(
+      mod_sites = case_when(
+        mod_sites > 0 ~ mod_sites+1,
+        .default = mod_sites
+      )
+    ) %>%
+    mutate(
+      nAA = nAA+1
+    ) %>%
+    nest(
+      mod_sites=mod_sites
+    ) %>% 
+    mutate(
+      mod_sites = map_chr(mod_sites,\(x) x$mod_sites %>%  paste(collapse = ";"))
+    ) %>% 
+    mutate(
+      sequence = case_when(
+        str_detect(Sequence,"^N") ~ str_replace(Sequence,"^N","RD"),
+        str_detect(Sequence,"^Q") ~ str_replace(Sequence,"^Q","RE"),
+        str_detect(Sequence,"^E") ~ str_replace(Sequence,"^E","RE"),
+        str_detect(Sequence,"^D") ~ str_replace(Sequence,"^D","RD")
+      )
+    ) %>% 
+    mutate(
+      irt = `RT in min`
+    ) %>% 
+    mutate(
+      mods = case_when(
+        str_detect(mods, "N\\-Term\\(ArgAcetylD3NQ\\)") ~ str_replace(mods,"N\\-Term\\(ArgAcetylD3NQ\\)","Acetyl:2H(3)"),
+        str_detect(mods, "N\\-Term\\(ArgAcetylD3\\)") ~ str_replace(mods,"N\\-Term\\(ArgAcetylD3\\)","Acetyl:2H(3)")
+      )
+    ) -> summaryfile_psm_for_testing
+  summaryfile_psm_for_testing %>% 
+    dplyr::select(
+      sequence,charge,index,mods,mod_sites,nAA,irt
+    ) %>% 
+    write_tsv(
+      "C:/Users/admin/alphapeptdeep/project/folder/alphapeptdeep/input_testing.tsv"
+    ) ###this is the testing data
+```
+
+## PSM annotation integration and strings handling + MET
+output object: file_index_arg, file_index_arg2, file_index_arg3, file_index_arg4, file_index_arg5, file_index_arg6_ttest
+```{r}
+folder_pdspectra_arg <- "./annotation_psm/200821_HELA_MGTG_iNrich_bRP_F_arg/"
+  ##read xml
+  xml2::read_html(
+    paste0(folder_pdspectra_arg,"index.html")
+  ) -> file_index_arg
+  #from xml object read table
+  rvest::html_table(
+    file_index_arg,
+    header = TRUE
+  ) ->file_index_arg
+  
+  ##table trimming
+  file_index_arg[[1]] -> file_index_arg #unlist
+  file_index_arg[seq(1,nrow(file_index_arg),by=2),seq(2,ncol(file_index_arg),by=2)] -> file_index_arg ## delete unnessary cols and rows
+  colnames(file_index_arg)<- as.vector(file_index_arg[1,]) %>% unlist ## colnames
+  file_index_arg[c(-1),] -> file_index_arg
+  
+  #peak list handling
+  readLines(paste0(folder_pdspectra_arg,"index.html"))-> file_index_lines_arg
+  
+  ##add column of peak list
+  file_index_arg %>% 
+    bind_cols(
+      tibble(peak_file = str_extract(file_index_lines_arg[str_detect(file_index_lines_arg,"Peak List")],"data\\/.+\\.txt"))
+    ) %>% 
+    mutate(
+      peak_table = map(
+        peak_file,\(x) read_tsv(paste0(folder_pdspectra_arg,x),show_col_types = FALSE), .progress = TRUE
+      )
+    )-> file_index_arg
+  
+  ###diagnostic ion b (0) (1+)
+  # file_index_arg2 %>% 
+  #   mutate(
+  #     peak_table = map(
+  #       peak_table, \(x) mutate(x,matches = if_else(`m/z` < 202.138331+0.005 & `m/z` > 202.138331-0.005, "b (0) (1+)", matches))
+  #     )
+  #   ) -> file_index_arg3
+  
+  file_index_arg %>% 
+    mutate(
+      diagnostic_ion_mz = map(peak_table, \(x) x$`m/z`[str_which(x$matches, "b[:blank:]\\(0")] )
+    ) %>% 
+    mutate(
+      diagnostic_ion_mz = map_dbl(diagnostic_ion_mz,\(x) ifelse(length(x)>0,x,NA))
+    ) %>%  
+    mutate(
+      peak_table_dropna = map(
+        peak_table,\(x) drop_na(x)
+      )
+    ) %>%
+    mutate(
+      peak_table_dropna_wo_modloss = map(peak_table_dropna,\(x) dplyr::filter(x,!str_detect(matches,"NH3|Ox|H2O")))
+    ) %>% 
+    mutate(
+      peak_table_dropna_wo_modloss = map(peak_table_dropna_wo_modloss, \(x) mutate(x,i_relative=i/max(i)))
+    ) %>% 
+    mutate(
+      peak_table_alpha_ms2= map(peak_table_dropna_wo_modloss,\(x) mutate(x, series = str_extract(matches,"b|y")))
+    ) %>% 
+    mutate(
+      peak_table_alpha_ms2= map(
+        peak_table_alpha_ms2,
+        \(x) mutate(x, ion_num = as.integer(str_extract(matches,"(?<=\\()[0-9]+(?=\\))")))
+      )
+    ) %>% ###b ion +1 because of modification! 
+    mutate(
+      peak_table_alpha_ms2= map(
+        peak_table_alpha_ms2,
+        \(x) mutate(x, ion_num = if_else(series == "b",ion_num +1,ion_num))
+      )
+    ) %>% 
+    mutate(
+      peak_table_alpha_ms2= map(
+        peak_table_alpha_ms2,
+        \(x) mutate(x, charge = as.integer(str_extract(matches,"(?<=\\()[0-9]+(?=\\+\\))")))
+      )
+    ) %>% 
+    mutate(
+      peak_table_alpha_ms2 = map(
+        peak_table_alpha_ms2,
+        \(x) dplyr::filter(x, charge<=2)
+      )
+    ) %>% 
+    mutate(
+      peak_table_alpha_ms2 = map(peak_table_alpha_ms2, \(x) mutate(x,i_relative=i/max(i)))
+    ) %>% 
+    mutate(
+      strip_seq=str_to_upper(str_extract(Sequence,"(?<=\\.)[:alpha:]+(?=\\.)"))
+    ) %>% ##strip seq add r
+    mutate(
+      strip_seq = paste0("R",strip_seq)
+    ) %>% 
+    mutate(
+      seq_len = str_length(strip_seq) ###modification of R! +1!
+    ) %>% 
+    mutate(
+      peak_table_alpha_ms2 = map2(
+        peak_table_alpha_ms2,
+        seq_len,
+        \(x,y) mutate(x,seq_len = y)
+      )
+    ) %>% 
+    mutate(
+      peak_table_alpha_ms2 = map(
+        peak_table_alpha_ms2,
+        \(x) mutate(x,ion_num2 = if_else(series == "y",seq_len - ion_num,ion_num))
+      )
+    )%>%
+    mutate(
+      peak_table_alpha_ms2 = map(
+        peak_table_alpha_ms2,
+        \(x) mutate(x,alpha_col = str_c(series,"_","z",charge))
+      )
+    ) %>% 
+    mutate(
+      fragment_inten_df = map(
+        peak_table_alpha_ms2,
+        \(x) pivot_wider(x,id_cols = ion_num2,names_from = alpha_col,values_from = i_relative)
+      )
+    ) %>% 
+    mutate(
+      fragment_inten_df2 = map(seq_len,\(x) tibble(ion_num2=seq(1,x-1)))
+    ) %>% 
+    mutate(
+      fragment_inten_df3 = map2(
+        fragment_inten_df,
+        fragment_inten_df2,
+        \(x,y) full_join(x,y,by=c("ion_num2"="ion_num2"))
+      )
+    )-> file_index_arg2
+  
+  
+  colnames(file_index_arg2)[16] <-"scan_num"
+  
+  file_index_arg2 %>% 
+    mutate(
+      scan_num = as.integer(scan_num)
+    ) %>% 
+    mutate(
+      charge = as.integer(Charge)
+    ) %>% 
+    mutate(
+      XCorr = as.numeric(XCorr)
+    ) %>% 
+    mutate(
+      `Percolator SVMScore` = as.numeric(`Percolator SVMScore`)
+    ) %>% 
+    mutate(
+      Modifications = str_replace_all(Modifications,"[:blank:]","")
+    ) -> file_index_arg2
+  
+  # file_index_arg2 %>% 
+  #   distinct(
+  #     strip_seq,scan_num,charge,XCorr,
+  #     .keep_all = TRUE
+  #   ) -> file_index_arg3
+  # 
+  # file_index_arg3 %>% 
+  #   mutate(
+  #     diagnostic_ion_int_relative = map(peak_table_alpha_ms2, \(x) x$i_relative[str_which(x$matches, "b[:blank:]\\(0")] )
+  #   ) %>% 
+  #   mutate(
+  #     diagnostic_ion_int_relative = map_dbl(diagnostic_ion_int_relative,\(x) ifelse(length(x)>0,x,NA))
+  #   ) -> file_index_arg3
+  # 
+  #FragmentPeptide()
+  ### bion yion ttest
+  {
+    MonoisotopicMass(
+      formula = list(C=8, H=11, N=4, O=2, S=0, x= 3),
+      isotopes = list(x = 2.01410177812) ##deuterium
+    ) -> mass_ntd3arg
+    
+    MonoisotopicMass(
+      formula = list(C=8, H=11, N=2, O=2, S=0, x= 3),
+      isotopes = list(x = 2.01410177812) ##deuterium
+    ) -> mass_d3k
+    
+    MonoisotopicMass(
+      formula = list(C=5, H=9, N=1, O=2, S=1)
+    ) -> mass_met_ox
+    
+    file_index_arg2 %>% 
+      mutate(
+        sequence_for_fragspec = str_extract(Sequence,"(?<=\\.).+(?=\\.)")
+      ) %>%
+      mutate(
+        sequence_for_fragspec = str_replace(sequence_for_fragspec,"^n","D"),
+        sequence_for_fragspec = str_replace(sequence_for_fragspec,"^q","E"),
+        sequence_for_fragspec = str_replace(sequence_for_fragspec,"^d","D"),
+        sequence_for_fragspec = str_replace(sequence_for_fragspec,"^e","E"),
+        sequence_for_fragspec = str_replace_all(sequence_for_fragspec,"c","C"),
+      ) %>%
+      mutate(
+        sequence_for_fragspec = paste0("r",sequence_for_fragspec)
+      ) %>% 
+      mutate(
+        frag_theo_spec = map(
+          sequence_for_fragspec,
+          \(x) OrgMassSpecR::FragmentPeptide(
+            x,
+            fragments = "by",
+            IAA = TRUE,
+            custom = list(
+              code = c("r","k","m"),
+              mass = c(mass_ntd3arg,mass_d3k,mass_met_ox)
+            )
+          )
+        )
+      ) -> file_index_arg3
+  }
+  
+  file_index_arg3 %>% 
+    mutate(
+      frag_theo_spec = map(
+        frag_theo_spec,
+        \(x) mutate(
+          x,
+          series = str_extract(ms2type,"[by]"),
+          ion_num = as.integer(str_extract(ms2type,"(?<=[by])[0-9]+")),
+          charge = as.integer(str_extract(ms2type,"[0-9](?=\\+)"))
+        )
+      )
+    ) -> file_index_arg4
+  
+  file_index_arg4 %>% 
+    mutate(
+      peak_table_alpha_ms2_vs_theo_spec = map2(
+        peak_table_alpha_ms2,
+        frag_theo_spec,
+        \(x,y) left_join(x,y, join_by(series == series, ion_num == ion_num, charge == charge))
+      )
+    ) -> file_index_arg4
+  
+  file_index_arg4 %>% 
+    mutate(
+      peak_table_alpha_ms2_vs_theo_spec = map(
+        peak_table_alpha_ms2_vs_theo_spec,
+        \(x) mutate(x,
+                    error = `m/z`-ms2mz
+        )
+      )
+    ) -> file_index_arg4
+  
+  file_index_arg4 %>% 
+    mutate(
+      b_ion_count = map_int(
+        peak_table_alpha_ms2_vs_theo_spec,
+        \(x) filter(x, series == "b") %>% nrow()
+      ),
+      y_ion_count = map_int(
+        peak_table_alpha_ms2_vs_theo_spec,
+        \(x) filter(x, series == "y") %>% nrow()
+      ),
+      b_ion_errors = map(
+        peak_table_alpha_ms2_vs_theo_spec,
+        \(x) filter(x, series == "b") %>% pull(error)
+      ),
+      y_ion_errors = map(
+        peak_table_alpha_ms2_vs_theo_spec,
+        \(x) filter(x, series == "y") %>% pull(error)
+      )
+    )-> file_index_arg4
+  
+  file_index_arg4 %>%
+    mutate(
+      peak_table_alpha_ms2_vs_theo_spec = map(
+        peak_table_alpha_ms2_vs_theo_spec,
+        \(x) mutate(x,
+                    error_ppm = (`m/z`-ms2mz)/`m/z`*1e6
+        )
+      )
+    ) -> file_index_arg4
+  
+  file_index_arg4 %>% 
+    mutate(
+      b_ion_errors_ppm = map(
+        peak_table_alpha_ms2_vs_theo_spec,
+        \(x) filter(x, series == "b") %>% pull(error_ppm)
+      ),
+      y_ion_errors_ppm = map(
+        peak_table_alpha_ms2_vs_theo_spec,
+        \(x) filter(x, series == "y") %>% pull(error_ppm)
+      ),
+      b_ion_mz = map(
+        peak_table_alpha_ms2_vs_theo_spec,
+        \(x) filter(x, series == "b") %>% pull(`m/z`)
+      ),
+      y_ion_mz = map(
+        peak_table_alpha_ms2_vs_theo_spec,
+        \(x) filter(x, series == "y") %>% pull(`m/z`)
+      )
+    ) -> file_index_arg4
+  
+  
+  file_index_arg4 %>% 
+    mutate(
+      b_y_ttest = map2_dbl(
+        b_ion_errors,
+        y_ion_errors,
+        \(x,y) if(length(x)>1 & length(y)>1){t.test(unlist(x),unlist(y),var.equal = TRUE)$p.value} else{return(NA)}
+      ),
+      b_y_ttest_ppm = map2_dbl(
+        b_ion_errors_ppm,
+        y_ion_errors_ppm,
+        \(x,y) if(length(x)>1 & length(y)>1){t.test(unlist(x),unlist(y),var.equal = TRUE)$p.value} else{return(NA)}
+      ),
+      b_y_ttest_mz = map2_dbl(
+        b_ion_mz,
+        y_ion_mz,
+        \(x,y) if(length(x)>1 & length(y)>1){t.test(unlist(x),unlist(y),var.equal = TRUE)$p.value} else{return(NA)}
+      ),
+      b_y_ttest_mean_diff = map2_dbl(
+        b_ion_mz,
+        y_ion_mz,
+        \(x,y) if(length(x)>1 & length(y)>1){t.test(unlist(x),unlist(y),var.equal = TRUE) %>% tidy %>% .$estimate} else{return(NA)}
+      )
+    ) -> file_index_arg5
+  
+  t.test(c(2,2,2),c(4,4,5))$estimate["mean of x"]
+  
+  diff(4,5)
+  
+  file_index_arg5 %>% 
+    select(
+      b_y_ttest_mean_diff,
+      b_y_ttest,
+      b_y_ttest_ppm
+    ) %>% 
+    mutate(
+      b_y_ttest_sig = if_else(b_y_ttest<0.05,"smert failed","smert succeed"),
+      b_y_ttest_ppm_sig = if_else(b_y_ttest_ppm<0.05,1,0)
+    ) %>% 
+    drop_na() %>% 
+    ggplot(
+      aes(x=b_y_ttest_mean_diff,fill=b_y_ttest_sig)
+    )+
+    geom_density(
+      alpha = 0.1
+    )-> test1
+  
+  file_index_arg5 %>% 
+    select(
+      b_y_ttest_mean_diff,
+      b_y_ttest,
+      b_y_ttest_ppm
+    ) %>% 
+    mutate(
+      b_y_ttest_sig = if_else(b_y_ttest<0.05,"smert failed","smert succeed"),
+      b_y_ttest_ppm_sig = if_else(b_y_ttest_ppm<0.05,"smert failed","smert succeed")
+    ) %>% 
+    drop_na() %>% 
+    ggplot(
+      aes(x=b_y_ttest_mean_diff,fill=b_y_ttest_ppm_sig)
+    )+
+    # geom_histogram(
+    #   binwidth = 20,
+    #   position = "dodge"
+    # )+
+    geom_density(
+      alpha = 0.1
+    ) -> test2
+  
+  ggarrange(test1,test2, ncol = 1)  
+  # lims(y=c(0,70))
+  
+  file_index_arg5 %>% 
+    mutate(
+      b_y_ttest_sig = if_else(b_y_ttest<0.05,1,0),
+      b_y_ttest_ppm_sig = if_else(b_y_ttest_ppm<0.05,1,0),
+      b_y_ttest_mz = if_else(b_y_ttest_mz<0.05,1,0)
+    ) %>% 
+    summarize(
+      .by = c(b_y_ttest_ppm_sig,b_y_ttest_mz),
+      count = n()
+    ) %>% 
+    drop_na()
+    
+  
+  file_index_arg5 %>% 
+    mutate(
+      b_y_ttest_sig = if_else(b_y_ttest<0.05,"blue",NA),
+      b_y_ttest_ppm_sig = if_else(b_y_ttest_ppm<0.05,"red",NA)
+    ) %>% 
+    summarize(
+      .by = c(b_y_ttest_sig,b_y_ttest_ppm_sig),
+      count = n()
+    ) %>% 
+    write_tsv(
+      "b_y_ttest.tsv"
+    )
+  file_index_arg5 %>% 
+    mutate(
+      b_y_ttest_sig = if_else(b_y_ttest<0.05,"blue",NA),
+      b_y_ttest_ppm_sig = if_else(b_y_ttest_ppm<0.05,"red",NA)
+    ) %>% 
+    ggplot(
+      aes(x= b_y_ttest, y= b_y_ttest_ppm)
+    )+
+    geom_point(
+      aes(color = b_y_ttest_sig, fill = b_y_ttest_ppm_sig),
+      shape=21,
+      size = 1,
+      stroke = 1
+    )+
+    scale_fill_manual(values=c("blue", "black")) + 
+    scale_color_manual(values=c("red", "black"))+
+    theme_bw()
+  ggsave(
+    paste0("./export/smert_ppm_mda.png"),
+    width = 15, height = 12, dpi=600, units = "cm")
+  
+  file_index_arg5 %>% 
+    mutate(
+      data = map(
+        peak_table_alpha_ms2_vs_theo_spec,
+        \(x) x %>% select(`m/z`,error,error_ppm,series)         
+      )
+    ) %>% 
+    select(data) %>% 
+    unnest(data) %>% 
+    pivot_longer(
+      c(error,error_ppm)
+    ) %>% 
+    ggplot(
+      aes(x=`m/z`,y=value)
+    )+
+    geom_point(
+      alpha = 0.5
+    )+
+    facet_wrap(
+      facets = vars(name,series),
+      scales = "free"
+    )+
+    theme_bw()
+  
+  
+  file_index_arg5 %>%   
+    mutate(index=1:nrow(.)) %>% 
+    separate_longer_delim(Modifications, delim=";") %>% 
+    mutate(
+      mods_aa = case_when(
+        str_detect(Modifications,"^N\\-Term")~"Any N-term",
+        str_detect(Modifications,"^[A-Z]")~str_extract(Modifications,"^[A-Z]"),
+        .default = Modifications
+      )
+    ) %>% 
+    mutate(
+      mods_name = case_when(
+        str_detect(Modifications,"Acetyl\\)")~"Acetyl",
+        str_detect(Modifications,"Acetyl\\:2H\\(3\\)")~"Acetyl:2H(3)",
+        str_detect(Modifications,"Oxidation")~"Oxidation",
+        str_detect(Modifications,"Carbamidomethyl")~"Carbamidomethyl",
+        .default = Modifications
+      )
+    ) %>% 
+    mutate(
+      mod_sites = case_when(
+        str_detect(Modifications,"^N\\-Term")~"0",
+        str_detect(Modifications,"^[A-Z]")~as.character(as.integer(str_extract(Modifications,"(?<=^[A-Z])[0-9]+"))+1),
+        .default = Modifications
+      )
+    ) %>% 
+    nest(nestedcol = c(Modifications,mods_name,mods_aa,mod_sites)) %>% 
+    mutate(
+      Modifications = map_chr(nestedcol,\(x) x$Modifications %>% paste(collapse = ";"))
+    ) %>% 
+    mutate(
+      mods = map_chr(nestedcol,\(x) unite(data = x, col = mods, c(mods_name,mods_aa),sep ="@") %>% .$mods %>% paste(collapse = ";"))
+    ) %>% 
+    mutate(
+      mod_sites = map_chr(nestedcol,\(x) x$mod_sites %>% paste(collapse = ";"))
+    )%>% 
+    mutate(
+      mods = case_when(
+        str_detect(mods, "N\\-Term\\(ArgAcetylD3NQ\\)") ~ str_replace(mods,"N\\-Term\\(ArgAcetylD3NQ\\)","Acetyl:2H(3)"),
+        str_detect(mods, "N\\-Term\\(ArgAcetylD3\\)") ~ str_replace(mods,"N\\-Term\\(ArgAcetylD3\\)","Acetyl:2H(3)")
+      )
+    ) %>% 
+    mutate(
+      sequence = str_to_upper(sequence_for_fragspec),
+      nAA = seq_len,
+      nce = as.integer(27),
+      instrument = "QE",
+      charge = as.integer(Charge)
+    )-> file_index_arg6_ttest
+  
+  ## need to write down more for exporting tsv from file_index_arg6
+
+```
+
+## Test set splitting: for trypsin
+output file: precursor_df_arg_1202_trypsin.tsv, precursor_df_arg_1202_trypsin_fragdf.tsv
+```{r}
+summaryfile_psm_for_testing3 %>%
+  select(-enzyme.y) %>% 
+  rename(enzyme = enzyme.x) -> summaryfile_psm_for_testing3
+  
+summaryfile_psm_for_testing3 %>% 
+  filter(enzyme == "trypsin") %>%
+  unnest(frag_df) %>% 
+  arrange(
+    index,ion_num2
+  ) %>% 
+  mutate(
+    frag_index = seq(0,nrow(.)-1)
+  ) %>% 
+  nest(frag_df= c(frag_index,ion_num2,b_z1,b_z2,y_z1,y_z2)) %>% 
+  mutate(
+    frag_start_idx = map_dbl(frag_df,\(x) min(x$frag_index))
+  ) %>% 
+  mutate(
+    frag_stop_idx = map_dbl(frag_df,\(x) max(x$frag_index)+1)
+  ) %>% 
+  dplyr::rename(
+    spec_idx = index
+  ) %>% 
+  select(
+    sequence,charge,spec_idx,mods,mod_sites,nAA,frag_start_idx,frag_stop_idx,nce,instrument
+  ) %>% 
+  write_tsv(
+    "C:/Users/admin/alphapeptdeep/project/folder/alphapeptdeep/precursor_df_arg_1202_trypsin.tsv"
+  )
+
+summaryfile_psm_for_testing3 %>% 
+  filter(enzyme == "trypsin") %>%
+  unnest(frag_df) %>% 
+  arrange(
+    index,ion_num2
+  ) %>% 
+  mutate(
+    frag_index = seq(0,nrow(.)-1)
+  ) %>% 
+  nest(frag_df= c(frag_index,ion_num2,b_z1,b_z2,y_z1,y_z2)) %>% 
+  select(frag_df) %>% 
+  unnest(frag_df) %>% 
+  select(
+    b_z1,b_z2,y_z1,y_z2
+  ) %>% 
+  mutate(
+    across(everything(),\(x) replace_na(x,0))
+  ) %>% 
+  write_tsv(
+    "C:/Users/admin/alphapeptdeep/project/folder/alphapeptdeep/precursor_df_arg_1202_trypsin_fragdf.tsv"
+  )
+```
+
+## Test set splitting: for chymotrypsin
+output file: precursor_df_arg_15_chymotrypsin.tsv, precursor_df_arg_15_chymotrypsin_fragdf.tsv
+```{r}
+
+summaryfile_psm_for_testing3 %>% 
+  filter(enzyme == "chymotrypsin") %>%
+  unnest(frag_df) %>% 
+  arrange(
+    index,ion_num2
+  ) %>% 
+  mutate(
+    frag_index = seq(0,nrow(.)-1)
+  ) %>% 
+  nest(frag_df= c(frag_index,ion_num2,b_z1,b_z2,y_z1,y_z2)) %>% 
+  mutate(
+    frag_start_idx = map_dbl(frag_df,\(x) min(x$frag_index))
+  ) %>% 
+  mutate(
+    frag_stop_idx = map_dbl(frag_df,\(x) max(x$frag_index)+1)
+  ) %>% 
+  dplyr::rename(
+    spec_idx = index
+  ) %>% 
+  select(
+    sequence,charge,spec_idx,mods,mod_sites,nAA,frag_start_idx,frag_stop_idx,nce,instrument
+  ) %>% 
+  write_tsv(
+    "C:/Users/admin/alphapeptdeep/project/folder/alphapeptdeep/precursor_df_arg_15_chymotrypsin.tsv"
+  )
+
+summaryfile_psm_for_testing3 %>% 
+  filter(enzyme == "chymotrypsin") %>%
+  unnest(frag_df) %>% 
+  arrange(
+    index,ion_num2
+  ) %>% 
+  mutate(
+    frag_index = seq(0,nrow(.)-1)
+  ) %>% 
+  nest(frag_df= c(frag_index,ion_num2,b_z1,b_z2,y_z1,y_z2)) %>% 
+  select(frag_df) %>% 
+  unnest(frag_df) %>% 
+  select(
+    b_z1,b_z2,y_z1,y_z2
+  ) %>% 
+  mutate(
+    across(everything(),\(x) replace_na(x,0))
+  ) %>% 
+  write_tsv(
+    "C:/Users/admin/alphapeptdeep/project/folder/alphapeptdeep/precursor_df_arg_15_chymotrypsin_fragdf.tsv"
+  )
+```
+
+#MS2 Prediction
+##AlphaPeptDeep(APD) MS2 Output handling:: Reading apd scoring output (for Figure 2A )
+output object: output_prediction_ms2_build, output_prediction_ms2_transfer, output_prediction_ms2_pretrained, output_prediction_ms2_arg (w/o arg), summaryfile_psm_for_training_pcc, summaryfile_psm_for_testing3_pcc
+```{r}
+{
+  folder_alphapeptdeep = "C:/Users/admin/alphapeptdeep/project/folder/alphapeptdeep/"
+  
+  
+  
+  output_prediction_ms2_build <- read_tsv(
+    paste0(folder_alphapeptdeep,"output_metrics_describ_230610.tsv")
+  )[,-1]
+  
+  output_prediction_ms2_transfer <- read_tsv(
+    paste0(folder_alphapeptdeep,"inrich/output_metrics_describ_for_311547_trypsin_231130.tsv")
+  )[,-1] %>% 
+    bind_rows(
+      read_tsv(
+        paste0(folder_alphapeptdeep,"inrich/output_metrics_describ_for_251969_chymo_231130.tsv")
+      )[,-1]
+    )
+  
+  output_prediction_ms2_pretrained <- read_tsv(
+    paste0(folder_alphapeptdeep,"output_metrics_describ4_230610.tsv")
+  )[,-1]
+  
+  output_prediction_ms2_arg <- read_tsv(
+    paste0(folder_alphapeptdeep,"inrich/output/output_metrics_describ_for_arg_trypsin_231201.tsv")
+  )[,-1] %>% 
+    bind_rows(
+      read_tsv(
+        paste0(folder_alphapeptdeep,"inrich/output/output_metrics_describ_for_arg_chymotrypsin_231201.tsv")
+      )[,-1]
+    )
+  
+  summaryfile_psm_for_training3 %>%
+    left_join(
+      output_prediction_ms2_transfer,
+      join_by(
+        index==spec_idx
+      )
+    ) -> summaryfile_psm_for_training_pcc
+  
+  summaryfile_psm_for_testing3 %>% 
+    left_join(
+      output_prediction_ms2_arg %>% select(-c(sequence,charge,irt,mods,mod_sites,nAA,nce,instrument,diagnostic_ion_int_relative)),
+      join_by(
+        index==spec_idx
+      )
+    ) -> summaryfile_psm_for_testing3_pcc
+}
+```
+
+## Reading apd prediction spectra output and merging into PSM table
+output object: fdr_pcc_arg_set, fdr_pcc_arg_set_fragdf, fdr_pcc_arg_set_preddf, summaryfile_psm_for_testing3_pcc
+```{r}
+#231027 fragdf, preddf, ms2_prediction result importing
+
+read_tsv(
+  paste0(folder_alphapeptdeep,"inrich/output/output_metrics_describ_for_arg_trypsin_231201.tsv")
+) %>% 
+  select(-...1) %>% 
+  mutate(
+    false_set = 1
+  ) -> fdr_pcc_arg_set
+
+fdr_pcc_arg_set %>% 
+  bind_rows(
+    read_tsv(
+      paste0(folder_alphapeptdeep,"inrich/output/output_metrics_describ_for_arg_chymotrypsin_231201.tsv")
+    ) %>% 
+      select(-...1) %>% 
+      mutate(
+        false_set = 1
+      )
+  ) -> fdr_pcc_arg_set
+
+###Original SPEC
+read_tsv(
+  paste0(folder_alphapeptdeep,"precursor_df_arg_1202_trypsin_fragdf.tsv")
+) %>% 
+  bind_rows(
+    read_tsv(
+      paste0(folder_alphapeptdeep,"precursor_df_arg_15_chymotrypsin_fragdf.tsv")
+    )
+  )-> fdr_pcc_arg_set_fragdf
+
+read_tsv(
+  paste0(folder_alphapeptdeep,"inrich/output/output_arg_ms2_prediction_for_arg_trypsin_231201.tsv")
+) %>%
+  bind_rows(
+    read_tsv(
+      paste0(folder_alphapeptdeep,"inrich/output/output_arg_ms2_prediction_for_arg_chymotrypsin_231201.tsv")
+    )
+  ) %>% 
+  select(-c(...1,b_modloss_z1,b_modloss_z2,y_modloss_z1,y_modloss_z2)) %>% 
+  rename(
+    b_z1_pred = b_z1,
+    b_z2_pred = b_z2,
+    y_z1_pred = y_z1,
+    y_z2_pred = y_z2
+  ) -> fdr_pcc_arg_set_preddf
+
+fdr_pcc_arg_set %>% 
+  mutate(
+    fragindex = map2(frag_start_idx,frag_stop_idx-1,\(x,y) seq(x,y,1))
+  ) %>%
+  unnest(fragindex) %>% 
+  bind_cols(
+    fdr_pcc_arg_set_fragdf,
+    fdr_pcc_arg_set_preddf
+  ) %>% 
+  mutate(
+    fragindex2=fragindex
+  ) %>% 
+  nest(
+    fragdf = fragindex:y_z2,
+    preddf = c(fragindex2,b_z1_pred:y_z2_pred)
+  ) -> fdr_pcc_arg_set
+fdr_pcc_arg_set %>% 
+  mutate(
+    fragdf2 = map(fragdf,\(x) mutate(x,across(.cols=c(b_z1:y_z2),.fns=~na_if(.,y=0)))),
+    preddf2 = map(preddf,\(x) mutate(x,across(.cols=c(b_z1_pred:y_z2_pred),.fns=~na_if(.,y=0))))
+  ) -> fdr_pcc_arg_set
+
+fdr_pcc_arg_set %>% 
+  mutate(
+    bion_count = map_dbl(fragdf2,\(x) length(na.omit(append(pull(x,b_z1),pull(x,b_z2)))))
+  ) -> fdr_pcc_arg_set
+
+fdr_pcc_arg_set %>%
+  mutate(
+    bion_pcc = map2_dbl(
+      fragdf,
+      preddf,
+      function(x,y) {
+        cor(append(pull(x,b_z1),pull(x,b_z2)),append(pull(y,b_z1_pred),pull(y,b_z2_pred)),method = "pearson")
+      },
+      .progress = TRUE
+    )
+  ) %>%
+  mutate(
+    yion_pcc = map2_dbl(
+      fragdf,
+      preddf,
+      function(x,y) {
+        cor(append(pull(x,y_z1),pull(x,y_z2)),append(pull(y,y_z1_pred),pull(y,y_z2_pred)),method = "pearson")
+      },
+      .progress = TRUE
+    )
+  ) -> fdr_pcc_arg_set
+
+summaryfile_psm_for_testing3 %>% 
+  bind_cols(
+    fdr_pcc_arg_set %>% select(spec_idx,PCC:yion_pcc)
+  ) -> summaryfile_psm_for_testing3_pcc
+
+#summaryfile_psm_for_testing3_pcc
+```
+
+## APD prediction spectra handling:: FN, FP, TP, Spec_FPR, SPEC_FNR
+output object: summaryfile_psm_for_testing3_pcc
+```{r}
+summaryfile_psm_for_testing3_pcc %>% 
+  mutate(
+    fragdf3 = map2(
+      fragdf2,
+      preddf2,
+      \(x,y) left_join(x,y,join_by(fragindex == fragindex2))
+    )
+  ) -> summaryfile_psm_for_testing3_pcc
+
+summaryfile_psm_for_testing3_pcc %>% 
+  mutate(
+    fragdf3 = map(
+      fragdf3,
+      \(x) replace_na(x,list(b_z1=0,b_z2=0,y_z1=0,y_z2=0,b_z1_pred=0,b_z2_pred=0,y_z1_pred=0,y_z2_pred=0))
+    )
+  ) -> summaryfile_psm_for_testing3_pcc
+  
+  summaryfile_psm_for_testing3_pcc %>%
+    mutate(
+      fragdf4 = map(
+        fragdf3,
+        \(x) mutate(x,
+                    b_z1_type = case_when(
+                      b_z1 == 0 & b_z1_pred ==0 ~ NA,
+                      b_z1 > 0 & b_z1_pred ==0 ~ "FN",
+                      b_z1 == 0 & b_z1_pred >0 ~ "FP",
+                      b_z1 > 0 & b_z1_pred >0 ~ "TP"
+                    ),
+                    b_z2_type = case_when(
+                      b_z2 == 0 & b_z2_pred ==0 ~ NA,
+                      b_z2 > 0 & b_z2_pred ==0 ~ "FN",
+                      b_z2 == 0 & b_z2_pred >0 ~ "FP",
+                      b_z2 > 0 & b_z2_pred >0 ~ "TP"
+                    ),
+                    y_z1_type = case_when(
+                      y_z1 == 0 & y_z1_pred ==0 ~ NA,
+                      y_z1 > 0 & y_z1_pred ==0 ~ "FN",
+                      y_z1 == 0 & y_z1_pred >0 ~ "FP",
+                      y_z1 > 0 & y_z1_pred >0 ~ "TP"
+                    ),
+                    y_z2_type = case_when(
+                      y_z2 == 0 & y_z2_pred ==0 ~ NA,
+                      y_z2 > 0 & y_z2_pred ==0 ~ "FN",
+                      y_z2 == 0 & y_z2_pred >0 ~ "FP",
+                      y_z2 > 0 & y_z2_pred >0 ~ "TP"
+                    )
+        ) %>% select(contains("type")) %>% 
+          pivot_longer(cols = contains("type"))
+      )
+    )%>%
+    mutate(
+      FN = map_dbl(
+        fragdf4,
+        \(x) sum(pull(x,value) %in% c("FN"))
+      )
+    ) %>%
+    mutate(
+      TP = map_dbl(
+        fragdf4,
+        \(x) sum(pull(x,value) %in% c("TP"))
+      )
+    ) %>%
+    mutate(
+      FP = map_dbl(
+        fragdf4,
+        \(x) sum(pull(x,value) %in% c("FP"))
+      )
+    ) %>% 
+    mutate(
+      spec_FDR = FP/(TP+FP),
+      spec_FNR = FN/(FN+TP)
+    ) -> summaryfile_psm_for_testing3_pcc
+```
+
+#FDR rate setting
+###from bidding_pcc_fdr.R, best cutoff is cutoff_pcc or 0.868823 PCC
+output object: summaryfile_psm_for_testing3_pcc
+```{r}
+summaryfile_psm_for_testing3_pcc %>% 
+  mutate(
+    ms2_filter = if_else(PCC > label_pcc_fdr001, 1, 0)
+  ) -> summaryfile_psm_for_testing3_pcc
+
+summaryfile_psm_for_testing3_pcc %>% 
+  filter(ms2_filter == 1) 
+```
+
+#RT Prediction
+## Making up training set and test set including GV transformation: gradients,
+output object: file_raw_index2, psm_563516
+output file: input_rt_training_",i,".tsv; input_rt_testing_",i,".tsv; input_rt_testing_gvtest_",i,".tsv; rt_training_count_renewal.tsv
+```{r}
+readRDS(file = "./export/psm_563516.rds") -> psm_563516
+  
+file_raw_index %>% 
+  summarize(
+    fraction= first(experiment),
+    replicate= first(replicate),
+    enzyme = first(enzyme),
+    .by = set
+  ) %>% 
+  bind_cols(
+    tibble(
+      left_time = c(15,15,10,10,10,10,10,10,10,10,10,10), ###fix:: min for each training data
+      right_time = c(140,140,158,158,158,158,158,158,158,158,158,158) ##fix:: 110 duration!,
+    )
+  ) -> file_raw_index2
+
+file_raw_index2 %>% 
+  mutate(
+    file_series = 1:12
+  ) -> file_raw_index2
+
+psm_563516 %>% 
+  mutate(
+    nt_arg = if_else(!is.na(nmod) & P1prime == "R",1L,0L)
+  ) -> psm_563516
+
+psm_563516 %>% summarize(
+  .by = nt_arg,
+  count = n()
+)
+
+unique(psm_563516$file_id_series)
+for (i in 1:length(unique(psm_563516$file_id_series))){
+  psm_563516 %>% 
+    filter(file_id_series == unique(psm_563516$file_id_series)[i]) %>% 
+    dplyr::rename(
+      spec_idx = index 
+    ) %>% 
+    select(
+      strip_seq,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg
+    ) %>% 
+    dplyr::rename(
+      sequence = strip_seq
+    ) %>%
+    write_tsv(
+      paste0(folder_alphapeptdeep,"input_rt_training_",i,".tsv")
+    )
+}
+  
+#testset
+for (i in 1:length(unique(summaryfile_psm_for_testing3$set))){
+  summaryfile_psm_for_testing3 %>% 
+    filter(set == unique(summaryfile_psm_for_testing3$set)[i]) %>% 
+    dplyr::rename(
+      spec_idx = index 
+    ) %>% 
+    select(
+      sequence,spec_idx,irt,mods,mod_sites,nAA,nce,instrument,rt_norm
+    ) %>%
+    mutate(
+      state = "genuine"
+    ) %>% 
+    bind_rows(
+      summaryfile_psm_for_training3 %>% 
+        filter(set == unique(summaryfile_psm_for_training3$set)[i]) %>% 
+        dplyr::rename(
+          spec_idx = index 
+        ) %>% 
+        select(
+          Sequence,spec_idx,irt,mods,mod_sites,nAA,nce,instrument,rt_norm
+        ) %>% 
+        dplyr::rename(
+          sequence = Sequence
+        ) %>%
+        mutate(
+          state = "dummy"
+        )
+    ) %>% 
+    write_tsv(
+      paste0(folder_alphapeptdeep,"input_rt_testing_",i,".tsv")
+    )
+}
+  
+##GV testset
+summaryfile_psm_for_testing3_rt_test_gv
+for (i in 1:length(unique(summaryfile_psm_for_testing3_rt_test_gv$set))){
+  summaryfile_psm_for_testing3_rt_test_gv %>% 
+    filter(set == unique(summaryfile_psm_for_testing3_rt_test_gv$set)[i]) %>% 
+    mutate(
+      sequence = paste0("GV",Sequence)
+    ) %>% 
+    mutate(
+      nAA = nAA+1
+    ) %>% 
+    dplyr::rename(
+      spec_idx = index 
+    ) %>% 
+    select(
+      sequence,spec_idx,irt,mods,gv_mod_sites,nAA,nce,instrument,rt_norm
+    ) %>%
+    rename(mod_sites = gv_mod_sites) %>% 
+    mutate(
+      state = "genuine"
+    ) %>% 
+    bind_rows(
+      summaryfile_psm_for_training3 %>% 
+        filter(set == unique(summaryfile_psm_for_training3$set)[i]) %>% 
+        dplyr::rename(
+          spec_idx = index 
+        ) %>% 
+        select(
+          Sequence,spec_idx,irt,mods,mod_sites,nAA,nce,instrument,rt_norm
+        ) %>% 
+        dplyr::rename(
+          sequence = Sequence
+        ) %>%
+        mutate(
+          state = "dummy"
+        )
+    ) %>% 
+    write_tsv(
+      paste0(folder_alphapeptdeep,"input_rt_testing_gvtest_",i,".tsv")
+    )
+}
+
+psm_563516 %>% 
+  mutate(
+    nt_arg = as.character(nt_arg)
+  ) %>% 
+  summarize(
+    count = n(),
+    experiment=dplyr::first(fraction),
+    enzyme=dplyr::first(enzyme),
+    replicate = first(replicate),
+    .by = c(file_id_series,nt_arg)
+  ) %>% write_tsv("./figures/rt/rt_training_count_renewal.tsv")
+```
+
+## APD RT Output handling: Reading apd prediction rt output, Linear model fitting, R2, MAE, t95
+output object: output_prediction_rt_train_result, output_prediction_rt_test_result, summary_rtprediction
+output file: rt_t95.tsv, summary_rtprediction.tsv
+```{r}
+folder_alphapeptdeep
+i=1
+output_prediction_rt_train_result <- tibble()
+output_prediction_rt_test_result <- tibble()
+for (i in 1:12){
+  output_prediction_rt_training <- read_tsv(
+    paste0(folder_alphapeptdeep,"output_rt_training_",i,".tsv")
+  )[,-1] %>% 
+    arrange(rt_norm) %>% 
+    mutate(file_series= i) %>% 
+    filter(nt_arg == 1)
+  
+  output_prediction_rt_test <- read_tsv(
+    paste0(folder_alphapeptdeep,"output_rt_testing_",i,".tsv")
+  )[,-1] %>% 
+    arrange(rt_norm) %>%
+    filter(
+      state == "genuine"
+    ) %>% 
+    mutate(file_series = i)
+  
+  fit_rt_training <- lm(rt_norm ~ rt_pred, data =output_prediction_rt_training)
+  
+  output_prediction_rt_training %>%
+    bind_cols(
+      predict(fit_rt_training, interval = "prediction", level =0.95, newdata = output_prediction_rt_training)
+    )->output_prediction_rt_training
+  
+  
+  output_prediction_rt_test %>% 
+    bind_cols(
+      predict(fit_rt_training, interval = "prediction", level =0.95, newdata = output_prediction_rt_test)
+    )->output_prediction_rt_test
+  
+  
+  output_prediction_rt_train_result %>% 
+    bind_rows(
+      output_prediction_rt_training
+    ) -> output_prediction_rt_train_result
+  
+  output_prediction_rt_test_result %>% 
+    bind_rows(
+      output_prediction_rt_test
+    ) -> output_prediction_rt_test_result
+}
+output_prediction_rt_train_result %>% 
+  arrange(
+    spec_idx
+  ) ->output_prediction_rt_train_result
+
+output_prediction_rt_test_result %>% 
+  arrange(
+    spec_idx
+  ) ->output_prediction_rt_test_result
+
+output_prediction_rt_test_result %>% 
+  mutate(
+    rt_test = if_else(rt_norm > lwr & rt_norm < upr, 1, 0)
+  ) ->output_prediction_rt_test_result
+
+output_prediction_rt_train_result %>% 
+  left_join(
+    file_raw_index2 %>% select(-c(left_time,right_time)),
+    join_by(file_series)
+  ) -> output_prediction_rt_train_result
+
+output_prediction_rt_train_result %>% 
+  mutate(
+    rt_observed = rt_norm*(right_time-left_time)+left_time,
+    rt_predicted = rt_pred*(right_time-left_time)+left_time,
+    rt_fit = fit*(right_time-left_time)+left_time,
+    rt_lwr = lwr*(right_time-left_time)+left_time,
+    rt_upr = upr*(right_time-left_time)+left_time
+  ) -> output_prediction_rt_train_result
+
+output_prediction_rt_test_result %>% 
+  left_join(
+    file_raw_index2,
+    join_by(file_series)
+  ) ->output_prediction_rt_test_result
+
+output_prediction_rt_test_result %>% 
+  mutate(
+    rt_observed = rt_norm*(right_time-left_time)+left_time,
+    rt_predicted = rt_pred*(right_time-left_time)+left_time,
+    rt_fit = fit*(right_time-left_time)+left_time,
+    rt_lwr = lwr*(right_time-left_time)+left_time,
+    rt_upr = upr*(right_time-left_time)+left_time
+  ) ->output_prediction_rt_test_result
+
+
+output_prediction_rt_train_result
+output_prediction_rt_test_result
+
+
+##R, MAE, T90
+{
+  
+  output_prediction_rt_train_result 
+  output_prediction_rt_test_result 
+  
+  
+  output_prediction_rt_train_result %>% 
+    filter(file_series==1)
+  
+  fit_rt_training <- lm(
+    rt_observed~ rt_predicted, 
+    data =output_prediction_rt_train_result %>% 
+      filter(file_series==1))
+  
+  fit_rt_training %>% tidy()
+  
+  output_prediction_rt_train_result %>% 
+    mutate(t95=rt_upr-rt_lwr) %>% 
+    summarise(
+      .by = c(set,file_series),
+      t95_mean = mean(t95)
+    ) -> summary_rtprediction_t95
+  summary_rtprediction_t95 %>% write_tsv(
+    "./figures/rt/rt_t95.tsv"
+  )
+  
+  summary_rtprediction <- tibble()
+  for (i in 1L:12L){
+    summary_rtprediction %>% 
+      bind_rows(
+        output_prediction_rt_train_result %>% 
+          filter(file_series==i) %>% 
+          metrics(
+            truth = rt_observed, estimate = rt_predicted
+          ) %>% 
+          mutate(
+            file_series =i
+          )
+      )->summary_rtprediction
+  }
+  summary_rtprediction %>% write_tsv("./figures/rt/summary_rtprediction.tsv")
+  
+  output_prediction_rt_train_result %>% 
+    filter(file_series==i) %>% 
+    metrics(
+      truth = rt_observed, estimate = rt_predicted
+    ) %>% 
+    mutate(
+      file_series =i
+    )
+  
+}
+```
+
+## APD RT: Result of GV transformation 
+output object: output_prediction_rt_gvtest_result
+output file: output_rt_testing_gvtest_",i,".tsv
+```{r}
+output_prediction_rt_gvtest_result <- tibble()
+  for (i in 1:12){
+    bind_rows(
+      output_prediction_rt_gvtest_result,
+      read_tsv(
+        paste0(folder_alphapeptdeep,"output_rt_testing_gvtest_",i,".tsv")
+      )[,-1] %>% 
+        arrange(rt_norm) %>%
+        filter(
+          state == "genuine"
+        ) %>% 
+        mutate(file_series = i)
+    )->output_prediction_rt_gvtest_result
+      
+  }
+  
+  output_prediction_rt_gvtest_result %>% 
+    left_join(
+      output_prediction_rt_test_result %>% select(spec_idx,rt_pred) %>% 
+        rename(rt_pred_original = rt_pred),
+      join_by(
+        spec_idx
+      )
+    )-> output_prediction_rt_gvtest_result
+```
+
+## APD RT: merge summaryfile_psm_for_testing_pcc+rt_prediction+reposition_arg_no_dups 
+output object: summaryfile_psm_for_testing3_pcc_rt
+output file: summaryfile_psm_for_testing3_pcc_rt_231201.tsv
+```{r}
+output_prediction_rt_test_result
+  
+  summaryfile_psm_for_testing3_pcc %>% colnames()
+  summaryfile_psm_for_testing3_pcc %>% 
+    left_join(
+      output_prediction_rt_test_result %>% select(spec_idx,rt_pred,fit,lwr,upr,rt_test),
+      join_by(
+        index == spec_idx
+      )
+    ) %>% 
+    left_join(
+      dbtable %>% rename(prot_seq_master=sequence) %>% select(accession,prot_seq_master),
+      join_by(
+        Accessions_Single == accession
+      )
+    ) %>% 
+    rename(accession_master = Accessions_Single) %>% 
+    mutate(
+      position_master = str_locate(prot_seq_master,Sequence)[,"start"]
+    ) %>% mutate(
+      prot_pos_master = paste0(accession_master,"|",position_master)
+    ) %>% 
+    left_join(
+      reposition_arg_no_dups %>%
+        mutate(
+          prot_name = str_extract(protein,"(?<=\\|)[A-Z0-9]+\\_HUMAN")
+        ) %>% 
+        select(seq,gene,prot_name,accession,position,p5p1,reviewed,under100),
+      join_by(
+        Sequence == seq
+      )
+    ) %>% 
+    mutate(
+      p1 = str_sub(p5p1,start=5,end=5)
+    ) %>% 
+    mutate(
+      p2 = str_sub(p5p1,start=4,end=5)
+    ) %>% 
+    mutate(
+      p3 = str_sub(p5p1,start=3,end=5)
+    ) %>%
+    mutate(
+      prot_pos_reposition = paste0(gene,"|",accession,"|",prot_name,"|",position)
+    ) %>% 
+    select(-prot_seq_master)-> summaryfile_psm_for_testing3_pcc_rt
+  
+  summaryfile_psm_for_testing3_pcc_rt %>% 
+    relocate(
+      rt_norm, .before = rt_pred
+    ) -> summaryfile_psm_for_testing3_pcc_rt
+  
+  summaryfile_psm_for_testing3_pcc_rt %>% write_tsv("./export/summaryfile_psm_for_testing3_pcc_rt_231201.tsv")
+```
+
+#MET integration
+output object: summaryfile_psm_for_testing3_pcc_rt_hfsm
+```{r}
+  summaryfile_psm_for_testing3_pcc_rt %>% 
+    bind_cols(
+      file_index_arg6_ttest %>% 
+        select(sequence_for_fragspec:b_y_ttest)
+    ) -> summaryfile_psm_for_testing3_pcc_rt_hfsm
+  summaryfile_psm_for_testing3_pcc_rt_hfsm %>% 
+    mutate(b_y_ttest = replace_na(b_y_ttest,0)) -> summaryfile_psm_for_testing3_pcc_rt_hfsm
+```
+
+#Validation
+##Data Preparation
+output object: summaryfile_psm_for_testing3_pcc_rt_hfsm2, arginylome_validation_matrix0, arginylome_validation_matrix1, arginylome_validation_matrix2
+```{r}
+
+##finalcheck
+summaryfile_psm_for_testing3_pcc_rt_hfsm %>%
+  mutate(
+    pcc_check = if_else(PCC>cutoff_pcc,1,0),###PCC cutoff
+    rt_check = rt_test,
+    b_y_ttest_check = if_else(b_y_ttest>=0.05,1,0),
+    #diagnostic_ion_check = if_else(!is.na(diagnostic_ion_int_relative),1,0),
+    p2gv_check = if_else(p2 == "GV" | p2 == "VG",1,0),
+    p1r_check = if_else(p1 == "R",1,0),
+  ) -> summaryfile_psm_for_testing3_pcc_rt_hfsm
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm %>% 
+  write_tsv("./export/summaryfile_psm_for_testing3_pcc_rt_hfsm_231201.tsv")
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm %>% 
+  select(prot_pos_master,prot_pos_reposition,sequence,pcc_check,rt_check,b_y_ttest_check,p2gv_check,p1r_check) -> arginylome_validation_matrix0
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm %>%
+  mutate(
+    prot_pos_new = paste0(accession,"|",position)
+  ) %>%
+  left_join(
+    output_cleavage %>% 
+      rename(
+        cleavage_name = name,
+        cleavage_score = score,
+        cleavage_type = type
+      ) %>% 
+      distinct(value,.keep_all=TRUE), ### 
+    join_by(
+      prot_pos_master == value
+    )
+  ) -> summaryfile_psm_for_testing3_pcc_rt_hfsm2
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  mutate(
+    dl_score = pcc_check+rt_check+b_y_ttest_check
+  )-> summaryfile_psm_for_testing3_pcc_rt_hfsm2
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  select(prot_pos_master,prot_pos_reposition,sequence,pcc_check,rt_check,b_y_ttest_check,p2gv_check,p1r_check) -> arginylome_validation_matrix0
+
+arginylome_validation_matrix0 %>% 
+  mutate(
+    score_sum = pcc_check+rt_check+b_y_ttest_check#+diagnostic_ion_check
+  ) %>% 
+  arrange(desc(score_sum)) %>% 
+  distinct(prot_pos_master,.keep_all = TRUE) -> arginylome_validation_matrix0
+
+arginylome_validation_matrix0 %>% 
+  dplyr::filter(p1r_check == 0) -> arginylome_validation_matrix1
+
+arginylome_validation_matrix1 %>% 
+  dplyr::filter(p2gv_check !=1) -> arginylome_validation_matrix2
+
+```
+

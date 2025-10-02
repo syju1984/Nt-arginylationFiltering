@@ -1,0 +1,5588 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+# Libraries
+```{r}
+library(pROC)
+library(tidyverse)
+#library(ggridges)
+library(devtools)
+library(Biostrings)
+library(Peptides)
+library(ggpubr)
+#library(VennDiagram)
+library(RColorBrewer)
+#library(hrbrthemes)
+#library(hexbin)
+library(ggseqlogo)
+library(dagLogo)
+#library(plotly)
+library(wesanderson)
+library(Rdisop)
+library(conflicted)
+library(broom)
+#library(seqRFLP)
+library(OrgMassSpecR) 
+library(scales)
+conflict_scout()
+conflicts_prefer(dplyr::filter())
+conflicts_prefer(dplyr::select())
+conflicts_prefer(dplyr::rename())
+conflicts_prefer(dplyr::first())
+conflicts_prefer(dplyr::desc())
+source("G:/Rcheatsheet/functions/FragmentPeptide3.R")
+library(tidymodels)
+library(ComplexHeatmap)
+library(ggpointdensity)
+library(viridis)
+library(ggVennDiagram)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+Sys.setenv(R_LIBCURL_SSL_REVOKE_BEST_EFFORT=TRUE)
+library(ReactomePA)
+library(rrvgo)
+library(UniProtKeywords)
+library(org.Hs.eg.db)
+library(ggrepel)
+library(magrittr)
+```
+
+
+#Fig. 2a
+```{r}
+#left
+output_prediction_comparison_trypsin_241009 %>%
+  mutate(
+    model = fct(model,levels=c("pretrained","built","finetuned","finetunedwoarg"))
+  ) %>% 
+  ggplot(aes(x=model,y=PCC))+
+  geom_violin(aes(fill = model),linewidth = 0.1,scale = "width")+
+  labs(y="PCC")+
+  geom_boxplot(width = 0.1,outlier.shape = NA,linewidth = 0.1)+
+  scale_x_discrete(labels =c("Pretrained","Built","Fine-tuned","Fine-tuned w/o\nR-starting peptides"))+
+  scale_fill_manual(
+    values = c("#4DAF4A","#377EB8","#E41A1C","#984EA3")
+  )+
+  scale_y_continuous(
+    limits=c(0,1)
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(color = "black",size = 7),
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(color = "black",size = 7)
+  )
+ggsave("./figures/2_03_finetuning1.png",width =4.5, height = 4,dpi = 600,units = "cm")
+
+#middle
+output_prediction_comparison_trypsin_241009 %>% 
+  mutate(
+    model = fct(model,levels=c("pretrained","built","finetuned","finetunedwoarg"))
+  ) %>% 
+  filter(PCC >= 0.9) %>% 
+  summarize(
+    .by = model,
+    count = n()
+  ) %>% 
+  mutate(
+    perc = count/9569
+  ) %>% 
+  ggplot(aes(x=model,y=perc,fill=model))+
+  geom_bar(stat = "identity")+
+  geom_text(
+    aes(label = scales::percent(perc,accuracy = 0.1)),vjust =-0.3,
+    size =2
+  )+
+  labs(y="PCC \u2265 0.9")+
+  scale_y_continuous(labels = scales::percent,breaks = seq(0,1,0.25),limits = c(0,1))+
+  #scale_x_discrete(labels =c("Built","Pretrained","Fine-tuned","Fine-tuned w/o\nR-starting peptides"))+
+  scale_fill_manual(
+    values = c("#4DAF4A","#377EB8","#E41A1C","#984EA3")
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(color = "black",size = 7),
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(color = "black",size = 7)
+  )
+ggsave("./figures/2_03_finetuning2.png",width =4.5, height = 4,dpi = 600,units = "cm")
+
+
+#right
+read_rds(
+  "./export/psm_17669.rds"
+) -> psm_17669
+
+psm_17669 %>% 
+  filter(
+    enzyme == "trypsin"
+  ) %>% 
+  mutate(
+    index = 1:nrow(.)
+  ) -> psm_9569
+
+psm_9569 %>% 
+  select(index,frag_df) %>% 
+  unnest(frag_df) %>% 
+  mutate(
+    across(everything(),\(x) replace_na(x,0))
+  ) %>% 
+  bind_cols(
+    read_tsv(
+      "C:/Users/admin/alphapeptdeep/project/alphapeptdeep_115/alphapeptdeep/inrich/output/prediction_17669_predict_inten_df_pretrained_model_trypsin_231206.tsv"
+    ) %>% select(
+      b_z1,b_z2,y_z1,y_z2
+    ) %>% 
+      rename_with(
+        .fn = \(x) paste0(x,"_pretrained")
+      ),
+    read_tsv(
+      "C:/Users/admin/alphapeptdeep/project/alphapeptdeep_115/alphapeptdeep/inrich/output/prediction_17669_predict_inten_df_built_model_trypsin_231206.tsv"
+    ) %>% select(
+      b_z1,b_z2,y_z1,y_z2
+    ) %>% 
+      rename_with(
+        .fn = \(x) paste0(x,"_built")
+      ),
+    read_tsv(
+      "C:/Users/admin/alphapeptdeep/project/alphapeptdeep_115/alphapeptdeep/inrich/output/prediction_17669_predict_inten_df_finetuned_model_trypsin_231206.tsv"
+    ) %>% select(
+      b_z1,b_z2,y_z1,y_z2
+    ) %>% 
+      rename_with(
+        .fn = \(x) paste0(x,"_finetuned")
+      ),
+    read_tsv(
+      "C:/Users/admin/alphapeptdeep/project/alphapeptdeep_115/alphapeptdeep/inrich/output/prediction_9569_predicted_inten_df_311547woarg_model_trypsin_231213.tsv"
+    ) %>% select(
+      b_z1,b_z2,y_z1,y_z2
+    ) %>% 
+      rename_with(
+        .fn = \(x) paste0(x,"_finetunedwoarg")
+      )
+  ) %>% 
+  select(
+    -c(frag_index,ion_num2)
+  ) %>% 
+  nest(
+    data = c(b_z1,b_z2,y_z1,y_z2),
+    pretrained = contains("pretrained"),
+    built = contains("built"),
+    finetuned = contains("finetuned"),
+    finetunedwoarg = contains("finetunedwoarg")
+  ) -> psm_9569_ionspecies_test_241010
+
+psm_9569_ionspecies_test_241010 %>% #head() %>% pull(data)
+  mutate(
+    pretrained_pcc = map2_dbl(
+      data,
+      pretrained,
+      \(x,y) cor(
+        append(
+          pull(x,b_z1),
+          pull(x,b_z2)
+        ) %>% append(
+          pull(x,y_z1)
+        ) %>% 
+          append(
+            pull(x,y_z2)
+          )  ,
+        append(
+          pull(y,b_z1_pretrained),
+          pull(y,b_z2_pretrained)
+        ) %>% append(
+          pull(y,y_z1_pretrained)
+        ) %>% 
+          append(
+            pull(y,y_z2_pretrained)
+          ),
+        method = "pearson"
+      )
+    ),
+    pretrained_pcc_b = map2_dbl(
+      data,
+      pretrained,
+      \(x,y) cor(
+        append(pull(x,b_z1),pull(x,b_z2)),
+        append(pull(y,b_z1_pretrained),pull(y,b_z2_pretrained)),
+        method = "pearson"
+      )
+    ),
+    pretrained_pcc_y = map2_dbl(
+      data,
+      pretrained,
+      \(x,y) cor(
+        append(pull(x,y_z1),pull(x,y_z2)),
+        append(pull(y,y_z1_pretrained),pull(y,y_z2_pretrained)),
+        method = "pearson"
+      )
+    )
+  ) %>% 
+  mutate(
+    built_pcc = map2_dbl(
+      data,
+      built,
+      \(x,y) cor(
+        append(
+          pull(x,b_z1),
+          pull(x,b_z2)
+        ) %>% append(
+          pull(x,y_z1)
+        ) %>% 
+          append(
+            pull(x,y_z2)
+          )  ,
+        append(
+          pull(y,b_z1_built),
+          pull(y,b_z2_built)
+        ) %>% append(
+          pull(y,y_z1_built)
+        ) %>% 
+          append(
+            pull(y,y_z2_built)
+          ),
+        method = "pearson"
+      )
+    ),
+    built_pcc_b = map2_dbl(
+      data,
+      built,
+      \(x,y) cor(
+        append(pull(x,b_z1),pull(x,b_z2)),
+        append(pull(y,b_z1_built),pull(y,b_z2_built)),
+        method = "pearson"
+      )
+    ),
+    built_pcc_y = map2_dbl(
+      data,
+      built,
+      \(x,y) cor(
+        append(pull(x,y_z1),pull(x,y_z2)),
+        append(pull(y,y_z1_built),pull(y,y_z2_built)),
+        method = "pearson"
+      )
+    )
+  )%>% 
+  mutate(
+    finetuned_pcc = map2_dbl(
+      data,
+      finetuned,
+      \(x,y) cor(
+        append(
+          pull(x,b_z1),
+          pull(x,b_z2)
+        ) %>% append(
+          pull(x,y_z1)
+        ) %>% 
+          append(
+            pull(x,y_z2)
+          )  ,
+        append(
+          pull(y,b_z1_finetuned),
+          pull(y,b_z2_finetuned)
+        ) %>% append(
+          pull(y,y_z1_finetuned)
+        ) %>% 
+          append(
+            pull(y,y_z2_finetuned)
+          ),
+        method = "pearson"
+      )
+    ),
+    finetuned_pcc_b = map2_dbl(
+      data,
+      finetuned,
+      \(x,y) cor(
+        append(pull(x,b_z1),pull(x,b_z2)),
+        append(pull(y,b_z1_finetuned),pull(y,b_z2_finetuned)),
+        method = "pearson"
+      )
+    ),
+    finetuned_pcc_y = map2_dbl(
+      data,
+      finetuned,
+      \(x,y) cor(
+        append(pull(x,y_z1),pull(x,y_z2)),
+        append(pull(y,y_z1_finetuned),pull(y,y_z2_finetuned)),
+        method = "pearson"
+      )
+    )
+  )%>% 
+  mutate(
+    finetunedwoarg_pcc = map2_dbl(
+      data,
+      finetunedwoarg,
+      \(x,y) cor(
+        append(
+          pull(x,b_z1),
+          pull(x,b_z2)
+        ) %>% append(
+          pull(x,y_z1)
+        ) %>% 
+          append(
+            pull(x,y_z2)
+          )  ,
+        append(
+          pull(y,b_z1_finetunedwoarg),
+          pull(y,b_z2_finetunedwoarg)
+        ) %>% append(
+          pull(y,y_z1_finetunedwoarg)
+        ) %>% 
+          append(
+            pull(y,y_z2_finetunedwoarg)
+          ),
+        method = "pearson"
+      )
+    ),
+    finetunedwoarg_pcc_b = map2_dbl(
+      data,
+      finetunedwoarg,
+      \(x,y) cor(
+        append(pull(x,b_z1),pull(x,b_z2)),
+        append(pull(y,b_z1_finetunedwoarg),pull(y,b_z2_finetunedwoarg)),
+        method = "pearson"
+      )
+    ),
+    finetunedwoarg_pcc_y = map2_dbl(
+      data,
+      finetunedwoarg,
+      \(x,y) cor(
+        append(pull(x,y_z1),pull(x,y_z2)),
+        append(pull(y,y_z1_finetunedwoarg),pull(y,y_z2_finetunedwoarg)),
+        method = "pearson"
+      )
+    )
+  ) -> psm_9569_ionspecies_test_241010_done
+
+psm_9569_ionspecies_test_241010_done
+
+psm_9569_ionspecies_test_241010_done %>% 
+  select(
+    -c(data,pretrained,built,finetuned,finetunedwoarg)
+  ) %>% 
+  pivot_longer(
+    cols = -c(index)
+  ) -> psm_9569_ionspecies_test_241010_done
+
+psm_9569_ionspecies_test_241010_done %>% 
+  mutate(
+    model = str_split_i(name,"_",1)
+  ) %>% 
+  filter(
+    !str_detect(name,"pcc$")
+  ) %>% 
+  mutate(
+    frag_series = str_split_i(name,"_",3)
+  ) %>% 
+  mutate(
+    model = factor(model,levels=c("pretrained","built","finetuned","finetunedwoarg"),labels=c("Pretrained","Built","Fine-tuned","Fine-tuned w/o \n R-starting Peptides"))
+  ) %>% 
+  ggplot(aes(x=frag_series,y=value))+
+  geom_violin(aes(fill = frag_series),linewidth = 0.1,scale = "width")+
+  labs(y="PCC")+
+  geom_boxplot(width = 0.25,outlier.shape = NA,linewidth = 0.1)+
+  # scale_x_discrete(labels =c("Pretrained","Built","Fine-tuned","Fine-tuned w/o\nR-starting peptides"))+
+  scale_fill_manual(
+    values = c(wes_palette("Zissou1")[1],wes_palette("Zissou1")[5])
+  )+
+  scale_x_discrete(
+    labels = c("b-ion","y-ion")
+  )+
+  scale_y_continuous(
+    limits=c(0.5,1)
+  )+
+  facet_wrap(
+    facets = vars(model),
+    nrow = 1
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    strip.text = element_text(color = "black",size = 2),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(color = "black",size = 7),
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(color = "black",size = 7),
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    panel.spacing = unit(0.1, "cm"),
+    axis.ticks.x = element_blank(),
+    axis.line.x = element_blank(),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave("./figures/2_03_model_yions.png",width=4.5,height=3,dpi = 600,units="cm")
+
+```
+
+#Fig. 2b
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  mutate(
+    histogram_color = case_when(
+      PCC>=0.9 ~ fct("1",levels = c("1","2","3","4")),
+      PCC<0.9 & PCC >=0.6 ~ fct("2",levels = c("1","2","3","4")),
+      PCC<0.6 ~ fct("3",levels = c("1","2","3","4"))
+    )
+  ) %>% 
+  gghistogram(
+    x = "PCC", 
+    add = "median", rug = TRUE,
+    fill = "histogram_color", palette = c("#66C2A5", "#FC8D62","#8DA0CB"),
+    binwidth = 0.025,
+    #add_density = TRUE,
+    position="stack",
+    size = 0.1
+  )+
+  labs(x="PCC",y="Count")+
+  scale_x_continuous(limits = c(-0.2,1))+
+  theme(
+    legend.position = "none",
+    #axis.title.x = element_blank(),
+    axis.title = element_text(color = "black",size = 7),
+    #axis.text.x = element_blank(),
+    axis.text = element_text(color = "black",size = 6),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave("./figures/2_03_pcc_summary.png",width=4.5,height=4.5, units = "cm",dpi = 600)
+
+```
+
+#Fig. 2c
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  select(
+    prot_pos_reposition,PCC,bion_pcc,yion_pcc
+  ) %>% 
+  pivot_longer(cols=c(bion_pcc,yion_pcc)) %>% 
+  mutate(
+    group = case_when(
+      PCC>=0.9 ~ fct("1",levels = c("1","2","3","4")),
+      PCC<0.9 & PCC >=0.6 ~ fct("2",levels = c("1","2","3","4")),
+      PCC<0.6 ~ fct("3",levels = c("1","2","3","4"))
+    )
+  ) %>% 
+  ggplot(
+    aes(y=value,x=group,fill=name)
+  )+
+  geom_boxplot(
+    size = 0.2,
+    outlier.size = 0.2,
+  )+
+  annotate(
+    "text",
+    x=1:3,
+    y = 1.08,
+    label = paste("N = ",c(194,446,577)),
+    size = 2
+  )+
+  scale_x_discrete(
+    limits = c("3","2","1"),
+    labels = c(expression("PCC"<"0.6", paste("0.6"<="","PCC",""<"0.9"),"0.9"<="PCC"))
+  )+
+  scale_fill_manual(labels = c("b-ion","y-ion"),values = c(wes_palette("Zissou1")[1],wes_palette("Zissou1")[5]))+
+  labs(y="PCC")+
+  theme_classic()+
+  theme(
+    legend.position = "none",
+    legend.title = element_blank(),
+    text= element_text(color = "black", size = 7),
+    axis.text.y = element_text(color = "black", size = 7, hjust=1),
+    axis.text.x = element_text(color = "black", size = 7,angle = 20, hjust =1),
+    axis.title.x = element_blank(),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave("./figures/2_pcc_ions.png",width=4.5,height=4,dpi = 600,units="cm")
+```
+
+#Fig. 2d
+```{r}
+#from bidding_pcc_fdr.R
+ggroc(
+  list(
+    PCC=roc(response=fdr_pcc_negative_set8$true_set,predictor = fdr_pcc_negative_set8$PCC), ##0.6105
+    SA=roc(response=fdr_pcc_negative_set8$true_set,predictor = fdr_pcc_negative_set8$SA), ##0.6083
+    SPC=roc(response=fdr_pcc_negative_set8$true_set,predictor = fdr_pcc_negative_set8$SPC), ## 0.5263
+    specFDR=roc(response=fdr_pcc_negative_set8$true_set,predictor = fdr_pcc_negative_set8$spec_FDR), #0.5015
+    specFNR=roc(response=fdr_pcc_negative_set8$true_set,predictor = fdr_pcc_negative_set8$spec_FNR), ##0.481
+    percolator=roc(response=fdr_pcc_negative_set8$true_set,predictor = fdr_pcc_negative_set8$percolator_score) #0.4979
+  )
+)+
+  scale_color_manual(
+    values =c("#E41A1C","#377EB8","#4DAF4A","#984EA3","#FF7F00","#F781BF","#1d91c0")
+  )+
+  theme_classic()+
+  theme(
+    #legend.position = "none",
+    legend.title = element_blank(),
+    text= element_text(color = "black", size = 10),
+    axis.text.y = element_text(color = "black", size = 10, hjust=1),
+    axis.text.x = element_text(color = "black", size = 10),
+    #axis.title.x = element_blank()
+  )
+ggsave("./figures/fdr_roc_v5.png",width=5,height=5,dpi = 600,units="cm")
+```
+
+
+#Fig. 2e
+```{r}
+#pcc_fdr2.R
+fdr_pcc_negative_set7_trypsin %>% 
+  arrange(desc(PCC)) %>% 
+  mutate(
+    PCC_index = 1:nrow(.)
+  ) %>% 
+  mutate(
+    FDR1 = cummean(fdr)
+  ) %>% 
+  arrange(desc(percolator_score)) %>% 
+  mutate(
+    pecolator_index = 1:nrow(.)
+  ) %>% 
+  mutate(
+    FDR2 = cummean(fdr)
+  ) %>% 
+  mutate(
+    fdr = if_else(true_set =="true",0,1)
+  ) %>% 
+  ggplot(
+  )+
+  geom_point(
+    aes(x=PCC_index,y=FDR1),color="#FF0000",size=0.05,alpha = 0.1
+  )+
+  geom_point(
+    aes(x=pecolator_index,y=FDR2),color="#00A08A",size=0.05,alpha = 0.1
+  )+
+  geom_hline(yintercept = 0.01,linetype = 2)+
+  labs(
+    x="Index",
+    y="FDR"
+  )+
+  scale_y_continuous(
+    labels = scales::percent,
+    breaks = seq(0,0.05,0.01),
+    limits = c(0,0.05)
+  )+
+  scale_x_reverse()+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    #axis.title.x = element_blank(),
+    text= element_text(color = "black", size = 8),
+    axis.text.y = element_text(color = "black", size = 7, hjust=1),
+    axis.text.x = element_text(color = "black", size = 7),
+    #axis.title.x = element_blank()
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave("./figures/2_06_new_fdrcurve.png",width=4.5,height=4.5,dpi = 600,units="cm")
+
+
+```
+
+#Fig. 2f
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  select(
+    index,prot_pos_reposition,PCC,bion_pcc,yion_pcc,pcc_check
+  ) %>% 
+  pivot_longer(cols=c(bion_pcc,yion_pcc)) %>% 
+  mutate(
+    group = case_when(
+      pcc_check==1 ~ fct("1",levels = c("1","0")),
+      pcc_check==0 ~ fct("0",levels = c("1","0"))
+    )
+  ) %T>% 
+  write_tsv(
+    "./figures/fig2f.tsv"
+  ) %>% 
+  ggplot(
+    aes(y=value,x=group,fill=name)
+  )+
+  geom_boxplot(
+    size = 0.2,
+    outlier.size = 0.2,
+  )+
+  annotate(
+    "text",
+    x=1:2,
+    y = 1.08,
+    label = paste("N = ",c(594,623)),
+    size = 2
+  )+
+  scale_x_discrete(
+    limits = c("0","1"),
+    labels = c(expression("FDR">"1%", "FDR"<="1%"))
+  )+
+  scale_fill_manual(labels = c("b-ion","y-ion"),values = c(wes_palette("Zissou1")[1],wes_palette("Zissou1")[5]))+
+  labs(y="PCC")+
+  theme_classic()+
+  theme(
+    legend.position = "none",
+    legend.title = element_blank(),
+    text= element_text(color = "black", size = 7),
+    axis.text.y = element_text(color = "black", size = 7, hjust=1),
+    axis.text.x = element_text(color = "black", size = 7),
+    axis.title.x = element_blank(),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave("./figures/2_07_fdr_ions.png",width=4.5,height=4,dpi = 600,units="cm")
+```
+
+
+#Fig. 2g
+```{r}
+output_prediction_rt_train_result
+summary_rtprediction_t95 %>% 
+  write_tsv(
+    "./figures/summary_rtprediction_t95.tsv"
+  )
+summary_rtprediction%>% 
+  write_tsv(
+    "./figures/summary_rtprediction.tsv"
+  )
+
+output_prediction_rt_test_result %>% filter(file_series==1) 
+
+i=1
+
+output_prediction_rt_train_result %>% 
+  filter(file_series == i) %T>% 
+  write_tsv(
+    "./figures/2_08_rt_prediction_training_set_mainfigure1.tsv"
+  ) %>% 
+  ggplot(aes(x=rt_observed, y=rt_predicted))+
+  geom_point(size=0.1,alpha=0.25) +
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=1.2,
+    label=bquote(
+      ~Delta*italic(t)[95*'%'] == .(str_sub(paste0(summary_rtprediction_t95[i,3]),1,5))*","~R^2==.(summary_rtprediction %>% filter(file_series==i,.metric =="rsq") %>% pull(.estimate) %>% round(3))
+    ),size =2
+  )+
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=0,vjust=3.2,
+    label=bquote(
+      ~MAE==.(summary_rtprediction %>% filter(file_series==i,.metric =="mae") %>% pull(.estimate) %>% round(3))*","~N==.(output_prediction_rt_train_result %>% filter(file_series==i) %>% nrow())
+    ),size =2
+  )+
+  geom_line(aes(x=rt_lwr), color = "red", linetype = "dashed",size =0.5)+
+  geom_line(aes(x=rt_upr), color = "red", linetype = "dashed",size =0.5)+
+  geom_smooth(method=lm, se=TRUE, size = 0.5)+
+  #lims(x=c(0,1),y=c(0,1))+
+  labs(
+    x="Observed RT (min)",
+    y="Predicted RT (min)"
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    #axis.title.x = element_blank(),
+    axis.title = element_text(color = "black",size = 7),
+    #axis.text.x = element_blank(),
+    axis.text = element_text(color = "black",size = 6),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave(
+  paste0("./figures/2_08_rt_prediction_training_set_mainfigure",i,".png"),width=4.5,height=4.5,dpi = 600,units="cm"
+)
+```
+
+# Fig. 2h
+```{r paged.print=FALSE}
+output_prediction_rt_train_result
+
+##original code, for rt model inspection using arg-starting peptides
+for (i in 1L:12L){
+  output_prediction_rt_train_result %>% 
+    filter(file_series == i) %>% 
+    ggplot(aes(x=rt_observed, y=rt_predicted))+
+    geom_point(size=0.5,alpha=0.5) +
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=0,vjust=1.2,
+      label=bquote(
+        ~Delta*italic(t)[95*'%'] == .(str_sub(paste0(summary_rtprediction_t95[i,3]),1,5))*","~R^2==.(summary_rtprediction %>% filter(file_series==i,.metric =="rsq") %>% pull(.estimate) %>% round(3))
+      ),size =4
+    )+
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=0,vjust=3.2,
+      label=bquote(
+        ~MAE==.(summary_rtprediction %>% filter(file_series==i,.metric =="mae") %>% pull(.estimate) %>% round(3))*","~N==.(output_prediction_rt_train_result %>% filter(file_series==i) %>% nrow())
+      ),size =4
+    )+
+    geom_line(aes(x=rt_lwr), color = "red", linetype = "dashed")+
+    geom_line(aes(x=rt_upr), color = "red", linetype = "dashed")+
+    geom_smooth(method=lm, se=TRUE)+
+    #lims(x=c(0,1),y=c(0,1))+
+    labs(
+      x="Observed RT (min)",
+      y="Predicted RT (min)"
+    )+
+    theme_classic2()+
+    theme(
+      axis.text = element_text(color = "black",size=10),
+      axis.title = element_text(color = "black",size=11)
+    )
+  ggsave(
+    paste0("./figures/rt/rt_prediction_training_set",i,".png"),width=10,height=10,dpi = 600,units="cm"
+  )
+}
+
+##for rt model inspection using arg-starting peptides >>> R into GV
+psm_563516 %>% 
+  filter(str_detect(strip_seq,"^R") & str_detect(nmod,"Acetyl\\:")) -> psm_17669_fig2h
+
+psm_17669_fig2h %>% 
+  dplyr::rename(
+    spec_idx = index
+  ) %>% 
+  select(
+    strip_seq,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg,file_id_series
+  ) %>% 
+  dplyr::rename(
+    sequence = strip_seq
+  ) %>% 
+  mutate(
+    sequence = str_replace(sequence,"^R","GV"),
+    nAA = nAA+1
+  ) %>%
+  separate_rows(
+    mod_sites,sep = ";"
+  ) %>% 
+  mutate(
+    mod_sites = as.integer(mod_sites),
+    mod_sites = if_else(mod_sites == 0,0,mod_sites+1)
+  ) %>% 
+  nest(
+    data = mod_sites
+  ) %>% #head() %>% pull(data)
+  mutate(
+    mod_sites = map_chr(
+      data,
+      \(x) pull(x,mod_sites) %>% paste0(collapse = ";")
+    )
+  ) %>% 
+  select(
+    sequence,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg,file_id_series
+  ) -> psm_17669_fig2h
+
+file_raw_index2
+i=1
+for (i in 1:length(unique(psm_17669_fig2h$file_id_series))){
+  psm_563516 %>% 
+    filter(file_id_series == file_raw_index2$set[i]) %>% 
+    dplyr::rename(
+        spec_idx = index 
+      ) %>% 
+      select(
+        strip_seq,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg
+      ) %>% 
+      dplyr::rename(
+        sequence = strip_seq
+      ) %>% 
+    write_tsv(
+      paste0(folder_alphapeptdeep,"input_rt_training_gv_fig2h_",i,".tsv")
+    )
+}
+
+
+for (i in 1:length(unique(psm_17669_fig2h$file_id_series))){
+  psm_17669_fig2h %>% 
+    filter(file_id_series == file_raw_index2$set[i]) %>% 
+    select(
+      sequence,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg
+    ) %>% 
+    write_tsv(
+      paste0(folder_alphapeptdeep,"input_rt_testing_gv_fig2h_",i,".tsv")
+    )
+}
+unique(psm_563516$file_id_series)
+
+
+# Fig 2h GV, APD runs ###anaconda :: peptdeep231207 
+{
+  folder_alphapeptdeep
+  i=1
+  output_prediction_rt_train_result <- tibble()
+  output_prediction_rt_test_result <- tibble()
+  for (i in 1:12){
+    output_prediction_rt_training <- read_tsv(
+      paste0(folder_alphapeptdeep,"output_rt_training_gv_fig2h_",i,".tsv")
+    )[,-1] %>% 
+      arrange(rt_norm) %>% 
+      mutate(file_series= i) %>% 
+      filter(str_detect(sequence,"^R")) %>% 
+      filter(
+        str_detect(mods, "Acetyl\\:2H\\(3\\)@Any")
+      )
+    
+    output_prediction_rt_test <- read_tsv(
+      paste0(folder_alphapeptdeep,"output_rt_testing_gv_fig2h_",i,".tsv")
+    )[,-1] %>% 
+      arrange(rt_norm) %>%
+      mutate(file_series = i)
+    
+    fit_rt_training <- lm(rt_norm ~ rt_pred, data =output_prediction_rt_training)
+    
+    output_prediction_rt_training %>%
+      bind_cols(
+        predict(fit_rt_training, interval = "prediction", level =0.95, newdata = output_prediction_rt_training)
+      )->output_prediction_rt_training
+    
+    
+    output_prediction_rt_test %>% 
+      bind_cols(
+        predict(fit_rt_training, interval = "prediction", level =0.95, newdata = output_prediction_rt_test)
+      )->output_prediction_rt_test
+    
+    
+    output_prediction_rt_train_result %>% 
+      bind_rows(
+        output_prediction_rt_training
+      ) -> output_prediction_rt_train_result
+    
+    output_prediction_rt_test_result %>% 
+      bind_rows(
+        output_prediction_rt_test
+      ) -> output_prediction_rt_test_result
+  }
+  output_prediction_rt_train_result %>% 
+    arrange(
+      spec_idx
+    ) ->output_prediction_rt_train_result
+  
+  output_prediction_rt_test_result %>% 
+    arrange(
+      spec_idx
+    ) ->output_prediction_rt_test_result
+  
+  output_prediction_rt_test_result %>% 
+    mutate(
+      rt_test = if_else(rt_norm > lwr & rt_norm < upr, 1, 0)
+    ) ->output_prediction_rt_test_result
+  
+  output_prediction_rt_train_result %>% 
+    left_join(
+      file_raw_index2 %>% select(-c(left_time,right_time)),
+      join_by(file_series)
+    ) -> output_prediction_rt_train_result
+  
+  output_prediction_rt_train_result %>% 
+    mutate(
+      rt_observed = rt_norm*(right_time-left_time)+left_time,
+      rt_predicted = rt_pred*(right_time-left_time)+left_time,
+      rt_fit = fit*(right_time-left_time)+left_time,
+      rt_lwr = lwr*(right_time-left_time)+left_time,
+      rt_upr = upr*(right_time-left_time)+left_time
+    ) -> output_prediction_rt_train_result
+  
+  output_prediction_rt_test_result %>% 
+    left_join(
+      file_raw_index2,
+      join_by(file_series)
+    ) ->output_prediction_rt_test_result
+  
+  output_prediction_rt_test_result %>% 
+    select(
+      -c(left_time.x,right_time.x)
+    ) %>% 
+    rename(
+      left_time = left_time.y,
+      right_time = right_time.y
+    ) -> output_prediction_rt_test_result
+  
+  output_prediction_rt_test_result %>% 
+    mutate(
+      rt_observed = rt_norm*(right_time-left_time)+left_time,
+      rt_predicted = rt_pred*(right_time-left_time)+left_time,
+      rt_fit = fit*(right_time-left_time)+left_time,
+      rt_lwr = lwr*(right_time-left_time)+left_time,
+      rt_upr = upr*(right_time-left_time)+left_time
+    ) ->output_prediction_rt_test_result
+  
+  
+  output_prediction_rt_train_result
+  output_prediction_rt_test_result
+  
+  
+  ##R, MAE, T90
+  {
+    
+    output_prediction_rt_train_result 
+    output_prediction_rt_test_result 
+    
+    
+    output_prediction_rt_train_result %>% 
+      filter(file_series==1)
+    
+    fit_rt_training <- lm(
+      rt_observed~ rt_predicted, 
+      data =output_prediction_rt_train_result %>% 
+        filter(file_series==1))
+    
+    fit_rt_training %>% tidy()
+    
+    output_prediction_rt_train_result %>% 
+      mutate(t95=rt_upr-rt_lwr) %>% 
+      summarise(
+        .by = c(set,file_series),
+        t95_mean = mean(t95)
+      ) -> summary_rtprediction_t95
+    summary_rtprediction_t95 %>% write_tsv(
+      "./figures/rt/rt_t95.tsv"
+    )
+    
+    summary_rtprediction <- tibble()
+    for (i in 1L:12L){
+      summary_rtprediction %>% 
+        bind_rows(
+          output_prediction_rt_train_result %>% 
+            filter(file_series==i) %>% 
+            metrics(
+              truth = rt_observed, estimate = rt_predicted
+            ) %>% 
+            mutate(
+              file_series =i
+            )
+        )->summary_rtprediction
+    }
+    summary_rtprediction %>% write_tsv("./figures/rt/summary_rtprediction_250210.tsv")
+    
+    output_prediction_rt_train_result %>% 
+      filter(file_series==i) %>% 
+      metrics(
+        truth = rt_observed, estimate = rt_predicted
+      ) %>% 
+      mutate(
+        file_series =i
+      )
+    
+  }
+  
+}
+
+i=1
+for (i in 1L:12L){
+  output_prediction_rt_train_result %>% 
+    filter(file_series == i) %>% 
+    ggplot(aes(x=rt_observed, y=rt_predicted))+
+    geom_point(size=0.5,alpha=0.5) +
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=0,vjust=1.2,
+      label=bquote(
+        ~Delta*italic(t)[95*'%'] == .(str_sub(paste0(summary_rtprediction_t95[i,3]),1,5))*","~R^2==.(summary_rtprediction %>% filter(file_series==i,.metric =="rsq") %>% pull(.estimate) %>% round(3))
+      ),size =4
+    )+
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=0,vjust=3.2,
+      label=bquote(
+        ~MAE==.(summary_rtprediction %>% filter(file_series==i,.metric =="mae") %>% pull(.estimate) %>% round(3))*","~N==.(output_prediction_rt_train_result %>% filter(file_series==i) %>% nrow())
+      ),size =4
+    )+
+    geom_line(aes(x=rt_lwr), color = "red", linetype = "dashed")+
+    geom_line(aes(x=rt_upr), color = "red", linetype = "dashed")+
+    geom_smooth(method=lm, se=TRUE)+
+    #lims(x=c(0,1),y=c(0,1))+
+    labs(
+      x="Observed RT (min)",
+      y="Predicted RT (min)"
+    )+
+    theme_classic2()+
+    theme(
+      axis.text = element_text(color = "black",size=10),
+      axis.title = element_text(color = "black",size=11)
+    )
+  ggsave(
+    paste0("./figures/rt/rt_prediction_training_set",i,".png"),width=10,height=10,dpi = 600,units="cm"
+  )
+}
+  
+  i=1
+  
+{
+  i=1
+  output_prediction_rt_train_result %>% 
+    filter(file_series == i) %>% 
+    ggplot(aes(x=rt_observed, y=rt_predicted))+
+    geom_point(size=0.1,alpha=0.25) +
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=0,vjust=1.2,
+      label=bquote(
+        ~Delta*italic(t)[95*'%'] == .(str_sub(paste0(summary_rtprediction_t95[i,3]),1,5))*","~R^2==.(summary_rtprediction %>% filter(file_series==i,.metric =="rsq") %>% pull(.estimate) %>% round(3))
+      ),size =2
+    )+
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=0,vjust=3.2,
+      label=bquote(
+        ~MAE==.(summary_rtprediction %>% filter(file_series==i,.metric =="mae") %>% pull(.estimate) %>% round(3))*","~N==.(output_prediction_rt_train_result %>% filter(file_series==i) %>% nrow())
+      ),size =2
+    )+
+    geom_line(aes(x=rt_lwr), color = "red", linetype = "dashed",size =0.5)+
+    geom_line(aes(x=rt_upr), color = "red", linetype = "dashed",size =0.5)+
+    geom_smooth(method=lm, se=TRUE, size = 0.5)+
+    #lims(x=c(0,1),y=c(0,1))+
+    labs(
+      x="Observed RT (min)",
+      y="Predicted RT (min)"
+    )+
+    theme_classic2()+
+    theme(
+      legend.position = "none",
+      #axis.title.x = element_blank(),
+      axis.title = element_text(color = "black",size = 7),
+      #axis.text.x = element_blank(),
+      axis.text = element_text(color = "black",size = 6),
+      plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+    )
+  ggsave(
+    paste0("./figures/rt/rt_prediction_training_set_mainfigure",i,".png"),width=4.5,height=4.5,dpi = 600,units="cm"
+  )
+}
+
+output_prediction_rt_test_result %>%
+  filter(
+    rt_test ==1
+  )
+  
+i=1
+for (i in 1L:12L){
+  output_prediction_rt_test_result %>% 
+    filter(file_series == i) %>% 
+    filter(
+      rt_test == 1
+    ) %>% nrow() -> rt_passed_string
+  
+  output_prediction_rt_test_result %>% 
+    filter(file_series == i) %>% nrow() -> rt_total_string
+  
+  output_prediction_rt_test_result %>% 
+    filter(file_series == i) %>% 
+    ggplot(aes(x=rt_observed, y=rt_predicted))+
+    geom_point(size=0.1,alpha=0.25) +
+    geom_line(aes(x=rt_lwr), color = "red", linetype = "dashed",size =0.5)+
+    geom_line(aes(x=rt_upr), color = "red", linetype = "dashed",size =0.5)+
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=-0.1,vjust=1.1,
+      label=bquote(
+        .(rt_passed_string)*"/"*.(rt_total_string)
+      ),size =2
+    )+
+    geom_smooth(method=lm, se=TRUE, size = 0.5)+
+      #lims(x=c(0,1),y=c(0,1))+
+      labs(
+        x="Observed RT (min)",
+        y="Predicted RT (min)"
+      )+
+      theme_classic2()+
+      theme(
+        legend.position = "none",
+        #axis.title.x = element_blank(),
+        axis.title = element_text(color = "black",size = 7),
+        #axis.text.x = element_blank(),
+        axis.text = element_text(color = "black",size = 6),
+        plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+      )
+  ggsave(
+    paste0("./figures/rt/rt_prediction_testing_set_fig2h_",i,".png"),width=4.5,height=4.5,dpi = 600,units="cm"
+  )
+}
+```
+
+#Fig. 2i
+## Fig 2i + K, SA, DG, > psm_17669_K, psm_17669_SA, psm_17669_DG
+```{r paged.print=FALSE}
+psm_563516 %>% 
+  filter(str_detect(strip_seq,"^R") & str_detect(nmod,"Acetyl\\:")) %>% 
+  dplyr::rename(
+    spec_idx = index
+  ) %>% 
+  select(
+    strip_seq,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg,file_id_series
+  ) %>% 
+  dplyr::rename(
+    sequence = strip_seq
+  ) %>% 
+  mutate(
+    sequence = str_replace(sequence,"^R","K")
+  ) %>%
+  select(
+    sequence,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg,file_id_series
+  ) -> psm_17669_K
+
+psm_563516 %>% 
+  filter(str_detect(strip_seq,"^R") & str_detect(nmod,"Acetyl\\:")) %>% 
+  dplyr::rename(
+    spec_idx = index
+  ) %>% 
+  select(
+    strip_seq,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg,file_id_series
+  ) %>% 
+  dplyr::rename(
+    sequence = strip_seq
+  ) %>% 
+  mutate(
+    sequence = str_replace(sequence,"^R","SA"),
+    nAA = nAA+1
+  ) %>%
+  separate_rows(
+    mod_sites,sep = ";"
+  ) %>% 
+  mutate(
+    mod_sites = as.integer(mod_sites),
+    mod_sites = if_else(mod_sites == 0,0,mod_sites+1)
+  ) %>% 
+  nest(
+    data = mod_sites
+  ) %>% #head() %>% pull(data)
+  mutate(
+    mod_sites = map_chr(
+      data,
+      \(x) pull(x,mod_sites) %>% paste0(collapse = ";")
+    )
+  ) %>% 
+  select(
+    sequence,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg,file_id_series
+  ) -> psm_17669_SA
+
+psm_563516 %>% 
+  filter(str_detect(strip_seq,"^R") & str_detect(nmod,"Acetyl\\:")) %>% 
+  dplyr::rename(
+    spec_idx = index
+  ) %>% 
+  select(
+    strip_seq,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg,file_id_series
+  ) %>% 
+  dplyr::rename(
+    sequence = strip_seq
+  ) %>% 
+  mutate(
+    sequence = str_replace(sequence,"^R","DG"),
+    nAA = nAA+1
+  ) %>%
+  separate_rows(
+    mod_sites,sep = ";"
+  ) %>% 
+  mutate(
+    mod_sites = as.integer(mod_sites),
+    mod_sites = if_else(mod_sites == 0,0,mod_sites+1)
+  ) %>% 
+  nest(
+    data = mod_sites
+  ) %>% #head() %>% pull(data)
+  mutate(
+    mod_sites = map_chr(
+      data,
+      \(x) pull(x,mod_sites) %>% paste0(collapse = ";")
+    )
+  ) %>% 
+  select(
+    sequence,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg,file_id_series
+  ) -> psm_17669_DG
+```
+
+## Fig 2i + K, SA, DG, > psm_17669_K, psm_17669_SA, psm_17669_DG > test input file for APD
+```{r paged.print=FALSE}
+for (i in 1:length(unique(psm_17669_K$file_id_series))){
+  psm_17669_K %>% 
+    filter(file_id_series == file_raw_index2$set[i]) %>% 
+    select(
+      sequence,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg
+    ) %>% 
+    write_tsv(
+      paste0(folder_alphapeptdeep,"input_rt_testing_k_",i,".tsv")
+    )
+}
+
+for (i in 1:length(unique(psm_17669_SA$file_id_series))){
+  psm_17669_SA %>% 
+    filter(file_id_series == file_raw_index2$set[i]) %>% 
+    select(
+      sequence,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg
+    ) %>% 
+    write_tsv(
+      paste0(folder_alphapeptdeep,"input_rt_testing_sa_",i,".tsv")
+    )
+}
+
+for (i in 1:length(unique(psm_17669_DG$file_id_series))){
+  psm_17669_DG %>% 
+    filter(file_id_series == file_raw_index2$set[i]) %>% 
+    select(
+      sequence,spec_idx,mods,mod_sites,nAA,nce,instrument,rt_norm,left_time,right_time,nt_arg
+    ) %>% 
+    write_tsv(
+      paste0(folder_alphapeptdeep,"input_rt_testing_dg_",i,".tsv")
+    )
+}
+```
+
+## Fig 2i + K, SA, DG, > output_prediction_rt_test_k_result, output_prediction_rt_test_sa_result, output_prediction_rt_test_dg_result
+```{r paged.print=FALSE}
+#K
+{
+  i=1
+  output_prediction_rt_test_k_result <- tibble()
+  for (i in 1:12){
+    output_prediction_rt_test_k <- read_tsv(
+      paste0(folder_alphapeptdeep,"output_rt_testing_k_",i,".tsv")
+    )[,-1] %>% 
+      arrange(rt_norm) %>%
+      mutate(file_series = i)
+    
+    fit_rt_training <- lm(rt_norm ~ rt_pred, data =output_prediction_rt_training)
+    
+    output_prediction_rt_test_k %>% 
+      bind_cols(
+        predict(fit_rt_training, interval = "prediction", level =0.95, newdata = output_prediction_rt_test_k)
+      )->output_prediction_rt_test_k
+    
+    
+    output_prediction_rt_test_k_result %>% 
+      bind_rows(
+        output_prediction_rt_test_k
+      ) -> output_prediction_rt_test_k_result
+  }
+  
+  output_prediction_rt_test_k_result %>% 
+    arrange(
+      spec_idx
+    ) %>% 
+    mutate(
+      rt_test = if_else(rt_norm > lwr & rt_norm < upr, 1, 0)
+    ) %>% 
+    left_join(
+      file_raw_index2,
+      join_by(file_series)
+    ) %>% 
+    select(
+      -c(left_time.x,right_time.x)
+    ) %>% 
+    rename(
+      left_time = left_time.y,
+      right_time = right_time.y
+    ) %>% 
+    mutate(
+      rt_observed = rt_norm*(right_time-left_time)+left_time,
+      rt_predicted = rt_pred*(right_time-left_time)+left_time,
+      rt_fit = fit*(right_time-left_time)+left_time,
+      rt_lwr = lwr*(right_time-left_time)+left_time,
+      rt_upr = upr*(right_time-left_time)+left_time
+    ) ->output_prediction_rt_test_k_result
+}
+
+#SA
+{
+  i=1
+  output_prediction_rt_test_sa_result <- tibble()
+  for (i in 1:12){
+    output_prediction_rt_test_sa <- read_tsv(
+      paste0(folder_alphapeptdeep,"output_rt_testing_sa_",i,".tsv")
+    )[,-1] %>% 
+      arrange(rt_norm) %>%
+      mutate(file_series = i)
+    
+    fit_rt_training <- lm(rt_norm ~ rt_pred, data =output_prediction_rt_training)
+    
+    output_prediction_rt_test_sa %>% 
+      bind_cols(
+        predict(fit_rt_training, interval = "prediction", level =0.95, newdata = output_prediction_rt_test_sa)
+      )->output_prediction_rt_test_sa
+    
+    
+    output_prediction_rt_test_sa_result %>% 
+      bind_rows(
+        output_prediction_rt_test_sa
+      ) -> output_prediction_rt_test_sa_result
+  }
+  
+  output_prediction_rt_test_sa_result %>% 
+    arrange(
+      spec_idx
+    ) %>% 
+    mutate(
+      rt_test = if_else(rt_norm > lwr & rt_norm < upr, 1, 0)
+    ) %>% 
+    left_join(
+      file_raw_index2,
+      join_by(file_series)
+    ) %>% 
+    select(
+      -c(left_time.x,right_time.x)
+    ) %>% 
+    rename(
+      left_time = left_time.y,
+      right_time = right_time.y
+    ) %>% 
+    mutate(
+      rt_observed = rt_norm*(right_time-left_time)+left_time,
+      rt_predicted = rt_pred*(right_time-left_time)+left_time,
+      rt_fit = fit*(right_time-left_time)+left_time,
+      rt_lwr = lwr*(right_time-left_time)+left_time,
+      rt_upr = upr*(right_time-left_time)+left_time
+    ) ->output_prediction_rt_test_sa_result
+}
+
+#DG
+{
+  i=1
+  output_prediction_rt_test_dg_result <- tibble()
+  for (i in 1:12){
+    output_prediction_rt_test_dg <- read_tsv(
+      paste0(folder_alphapeptdeep,"output_rt_testing_dg_",i,".tsv")
+    )[,-1] %>% 
+      arrange(rt_norm) %>%
+      mutate(file_series = i)
+    
+    fit_rt_training <- lm(rt_norm ~ rt_pred, data =output_prediction_rt_training)
+    
+    output_prediction_rt_test_dg %>% 
+      bind_cols(
+        predict(fit_rt_training, interval = "prediction", level =0.95, newdata = output_prediction_rt_test_dg)
+      )->output_prediction_rt_test_dg
+    
+    
+    output_prediction_rt_test_dg_result %>% 
+      bind_rows(
+        output_prediction_rt_test_dg
+      ) -> output_prediction_rt_test_dg_result
+  }
+  
+  output_prediction_rt_test_dg_result %>% 
+    arrange(
+      spec_idx
+    ) %>% 
+    mutate(
+      rt_test = if_else(rt_norm > lwr & rt_norm < upr, 1, 0)
+    ) %>% 
+    left_join(
+      file_raw_index2,
+      join_by(file_series)
+    ) %>% 
+    select(
+      -c(left_time.x,right_time.x)
+    ) %>% 
+    rename(
+      left_time = left_time.y,
+      right_time = right_time.y
+    ) %>% 
+    mutate(
+      rt_observed = rt_norm*(right_time-left_time)+left_time,
+      rt_predicted = rt_pred*(right_time-left_time)+left_time,
+      rt_fit = fit*(right_time-left_time)+left_time,
+      rt_lwr = lwr*(right_time-left_time)+left_time,
+      rt_upr = upr*(right_time-left_time)+left_time
+    ) ->output_prediction_rt_test_dg_result
+}
+```
+
+## Fig 2i + K, SA, DG, > summary, figure
+```{r paged.print=FALSE}
+output_prediction_rt_train_result %>% 
+  mutate(
+    aa_replace = "R"
+  ) %>% 
+  bind_rows(
+    output_prediction_rt_test_result %>% 
+      mutate(
+        aa_replace = "GV"
+      ),
+    output_prediction_rt_test_k_result %>% 
+      mutate(
+        aa_replace = "K"
+      ),
+    output_prediction_rt_test_sa_result %>% 
+      mutate(
+        aa_replace = "SA"
+      ),
+    output_prediction_rt_test_dg_result %>% 
+      mutate(
+        aa_replace = "DG"
+      )
+  ) -> output_prediction_rt_test_merged_result
+
+output_prediction_rt_test_merged_result %>% 
+  mutate(
+    fit_dev = rt_upr-rt_fit,
+    pred_dev = rt_observed-rt_predicted,
+    pred_fit_dev = pred_dev - rt_fit,
+    aa_replace = fct(aa_replace, levels = c("R","K","SA","DG","GV"))
+  ) %>% 
+  summarise(
+    mean_fit_dev=mean(fit_dev)
+  ) %>% pull(mean_fit_dev) -> mean_fit_Dev
+
+output_prediction_rt_test_merged_result %>% 
+  mutate(
+    fit_dev = upr-fit,
+    pred_dev = rt_pred-rt_norm,
+    pred_fit_dev = pred_dev - fit,
+    aa_replace = fct(aa_replace, levels = c("R","K","SA","DG","GV"))
+  ) %>% 
+  write_tsv(
+    "./export/output_prediction_rt_test_merged_result_aa_replace.tsv"
+  )
+
+output_prediction_rt_test_merged_result %>% 
+  mutate(
+    fit_dev = upr-fit,
+    pred_dev = rt_pred-rt_norm,
+    pred_fit_dev = pred_dev - fit,
+    aa_replace = fct(aa_replace, levels = c("R","K","SA","DG","GV"))
+  ) %>% 
+  filter(
+    pred_dev >= fit_dev
+  ) %>% 
+  summarize(
+    .by = aa_replace,
+    count = n()
+  ) %>% 
+  mutate(
+    count2 = 17669 - count
+  )%>% 
+  write_tsv(
+    "./export/output_prediction_rt_test_merged_result_aa_replace_summary.tsv"
+  )
+
+output_prediction_rt_test_merged_result %>% 
+  mutate(
+    fit_dev = rt_upr-rt_fit,
+    pred_dev = rt_observed-rt_predicted,
+    pred_fit_dev = pred_dev - rt_fit,
+    aa_replace = fct(aa_replace, levels = c("R","K","SA","DG","GV"))
+  ) %T>% 
+  # ) select(
+  #   fit_dev, pred_dev, pred_fit_dev, aa_replace
+  # )% T>% 
+  write_tsv(
+    "./figures/fig2i.tsv"
+  ) %>% 
+  ggplot(
+    aes(x= pred_dev, color = aa_replace)
+  )+
+  stat_ecdf(
+    #alpha = 0.95
+  )+
+  geom_vline(
+    aes(xintercept = -mean_fit_Dev),
+    color = "black", linetype = "dashed"
+  )+
+  scale_color_manual(
+    values = c(
+      "R"=RColorBrewer::brewer.pal(9,"Set1")[1],
+      "K"=RColorBrewer::brewer.pal(9,"Set1")[2],
+      "SA"=RColorBrewer::brewer.pal(9,"Set1")[3],
+      "DG"=RColorBrewer::brewer.pal(9,"Set1")[4],
+      "GV"=RColorBrewer::brewer.pal(9,"Set1")[5]
+    )
+  )+
+  labs(
+    x=expression(paste(italic(Delta),RT,"(Obs.-Pred.) (min)")),
+    y="Cumulative Distribution",
+    Color = "AA Replaced"
+  )+
+  theme_classic()+
+  theme(
+    #legend.position = "none",
+    legend.title = element_blank(),
+    text= element_text(color = "black", size = 7),
+    axis.text.y = element_text(color = "black", size = 7, hjust=1),
+    axis.text.x = element_text(color = "black", size = 7),
+    axis.title = element_text(size=7),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
+    legend.position=c(.8,.25),
+    legend.margin = margin(unit = "pt"),
+    legend.key.height = unit(-5.0,unit= "pt"),
+    legend.key.spacing =unit(-1.0,unit= "pt")
+  )
+ggsave(paste0("./figures/rt_aa_replace.png"), width=4.5, height = 4.5, units = "cm", dpi = 600)
+  
+  summarize(
+    .by = aa_replace,
+    avg_fit_dev = mean(pred_dev)
+  )
+  
+  wes_palette("AsteroidCity1",n=5)
+  wes_palette()
+  RColorBrewer::display.brewer.all()
+  RColorBrewer::brewer.pal(9,"Set1")
+```
+
+#Fig. 2j
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm %>% 
+  distinct(set) %>% pull(set) -> set_vector
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm %>% 
+  summarize(
+    .by = set,
+    experiment = first(experiment),
+    replicate = first(replicate),
+    enzyme = first(enzyme),
+    count = n(),
+    rt_check = sum(rt_check)
+  )
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm %>% 
+  summarize(
+    .by = set,
+    experiment = first(experiment),
+    replicate = first(replicate),
+    enzyme = first(enzyme),
+    count = n(),
+    rt_check = sum(rt_check)
+  ) %>% pull(set) -> set_vector
+
+i=1 
+
+
+
+paste0(
+  summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+    summarize(
+      .by = set,
+      experiment = first(experiment),
+      replicate = first(replicate),
+      enzyme = first(enzyme),
+      count = n(),
+      rt_check = sum(rt_check)
+    ) %>% 
+    filter(
+      set == set_vector[i]
+    ) %>% 
+    pull(rt_check),
+  "/",
+  summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+    summarize(
+      .by = set,
+      experiment = first(experiment),
+      replicate = first(replicate),
+      enzyme = first(enzyme),
+      count = n(),
+      rt_check = sum(rt_check)
+    ) %>% 
+    filter(
+      set == set_vector[i]
+    ) %>% 
+    pull(count)
+) -> count_for_rt
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  filter(
+    set == set_vector[1]
+  ) %>% 
+  mutate(
+    rt_norm = (right_time - left_time)* rt_norm + left_time,
+    rt_pred = (right_time - left_time)* rt_pred + left_time,
+    fit = (right_time - left_time)* fit + left_time,
+    lwr = (right_time - left_time)* lwr + left_time,
+    upr = (right_time - left_time)* upr + left_time
+  ) %>%
+  ggplot(aes(x=rt_norm, y=rt_pred))+
+  geom_point(
+    aes(color = fct(as.character(rt_check),levels =c("0","1"))),
+    size=0.1
+  )+
+  annotate(
+    "text",x=-Inf,y=Inf,hjust=-0.2,vjust=2,
+    label=paste0("Passed = ",count_for_rt),size =2
+  )+
+  geom_line(aes(x=lwr), color = "red", linetype = "dashed")+
+  geom_line(aes(x=upr), color = "red", linetype = "dashed")+
+  #geom_smooth(method=lm, se=TRUE)+
+  #lims(x=c(0,1),y=c(0,1))+
+  scale_color_manual(
+    values = c("black","red")
+  )+
+  labs(
+    x="Observed RT (min)",
+    y="Predicted RT (min)"
+  )+
+  #lims(x=c(30,140),y=c(30,140))+
+  theme_classic2()+
+  theme(
+  legend.position = "none",
+  #axis.title.x = element_blank(),
+  axis.title = element_text(color = "black",size = 7),
+  #axis.text.x = element_blank(),
+  axis.text = element_text(color = "black",size = 7),
+  plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+)
+ggsave(
+  paste0("./figures/fig2j.png"),width=4.5,height=4.5,dpi = 600,units="cm"
+)
+
+```
+
+#Fig. 2k
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  mutate(
+    rt_deviation = rt_norm-rt_pred,
+    rt_deviation = rt_deviation*(right_time- left_time),
+    rt_test = case_when(
+      rt_deviation > 0 & rt_norm > upr ~ "increase",
+      rt_deviation < 0 & rt_norm < lwr ~ "decrease",
+      .default = "under_t95"
+    )
+  ) %>% 
+  select(
+    index, rt_deviation, rt_test
+  ) %T>% 
+  write_tsv(
+    "./figures/fig2k.tsv"
+  ) %>% 
+  ggpubr::gghistogram(
+    x = "rt_deviation",
+    #add="median",
+    fill = "rt_test",
+    position = "stack",
+    size = 0.1
+  )+
+  labs(
+    x=expression(paste(italic(Delta),RT,"(Obs.-Pred.) (min)")),
+    y="PSM count",
+    fill = "RT prediction"
+    #color = "RT prediction"
+  )+
+  scale_fill_manual(
+    labels = c("Decrease","Increase",expression(" "*Under~Delta*t[95*"%"])),
+    values = c("grey","grey","red")
+  )+
+  theme(
+    legend.position = "none",
+    axis.title = element_text(color = "black",size = 7),
+    axis.text = element_text(color = "black",size = 7),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave("./figures/fig2k.png",width =4.5,height = 4.5, dpi = 600, units = "cm")
+```
+
+#Fig. 2l
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% 
+  filter(
+    pcc_check ==1
+  ) %>%
+  select(
+    index,`Delta M in ppm`,rt_check
+  ) %>% filter(
+    rt_check  == 1
+  ) %T>% 
+  write_tsv(
+    "./figures/fig2l_rt_passed.tsv"
+  ) %>% 
+  pull(`Delta M in ppm`) -> a
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% 
+  filter(
+    pcc_check ==1
+  ) %>%
+  select(
+    index,`Delta M in ppm`,rt_check
+  ) %>% filter(
+    rt_check  == 0
+  ) %T>% 
+  write_tsv(
+    "./figures/fig2l_rt_failed.tsv"
+  ) %>% 
+  pull(`Delta M in ppm`) -> b
+
+# KS test
+ks.test(a,b)
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% 
+  # dplyr::filter(
+  #   !(gene_position %in% str_replace(table_gene_position$gene_position,"\\|","_"))
+  # ) %>%
+  filter(
+    pcc_check ==1
+  ) %>%
+  select(
+    `Delta M in ppm`,rt_check
+  ) %>%
+  mutate(
+    rt_check = fct(as.character(rt_check))
+  ) %>% 
+  ggplot(
+    aes(x=`Delta M in ppm`,color=rt_check)
+  )+
+  stat_ecdf()+
+  #wes_palette("AsteroidCity1",n=5)[3]
+  # geom_boxplot(width = 0.5,linewidth = 0.2, outlier.size = 0.2,color = "black")+
+  scale_color_manual(
+    values = c("1"=wes_palette("AsteroidCity1",n=5)[3],"0"=wes_palette("AsteroidCity1",n=5)[1]),
+  )+
+  # stat_compare_means(
+  #     #comparisons = list(c("rt_check")),
+  #     method = "t.test",
+  #     method.args = list(var.equal = TRUE),
+  #     label.y = 1,
+  #     size = 2
+  #   )+
+  labs(
+    x=expression(paste(Precursor," ",italic(Delta),Mass," (ppm)")),
+    y="Cumulative Distribution"
+  )+
+  theme_classic()+
+  theme(
+    legend.position = "none",
+    legend.title = element_blank(),
+    text= element_text(color = "black", size = 7),
+    axis.text.y = element_text(color = "black", size = 7, hjust=1),
+    axis.text.x = element_text(color = "black", size = 7),
+    axis.title = element_text(size=7),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave(paste0("./figures/2_rt_rt_vs_pcc_kstest.png"), width=4.5, height = 4.5, units = "cm", dpi = 600)
+```
+
+
+#Fig. 2m
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm %>% 
+  mutate(
+    b_ion_errors = map_dbl(b_ion_errors,\(x) mean(x)),
+    y_ion_errors = map_dbl(y_ion_errors,\(x) mean(x))
+  ) %>% 
+  select(
+    index,b_ion_errors,y_ion_errors
+  ) %T>% 
+  write_tsv(
+    "./figures/fig2m.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=b_ion_errors*1000,y=y_ion_errors*1000)
+  )+
+  geom_pointdensity(adjust=5,size = 0.25)+
+  scale_color_viridis()+
+  scale_y_continuous(
+    limits = c(-50,50)
+  )+
+  scale_x_continuous(
+    limits = c(-50,50)
+  )+
+  labs(
+    x="b-ion Errors (mDa)",
+    y="y-ion Errors (mDa)",
+    color = "Number of Neighbors"
+  )+
+  theme_bw()+
+  theme(
+    legend.frame = element_rect(linewidth = 0.2),
+    legend.position = c(.5,.85),
+    legend.direction = "horizontal",
+    legend.title.position = "top",
+    legend.text = element_text(color="black",size=7),
+    legend.title = element_text(color="black",size=7),
+    axis.text = element_text(color="black",size=7),
+    axis.title = element_text(size=7)
+  )
+ggsave("./figures/fig2m.png",width=4.5,height=4.5,dpi = 600,units="cm")
+```
+#Fig. 2o
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>%
+  mutate(
+    b_y_ttest_check = fct(as.character(b_y_ttest_check)),
+  ) %>% 
+  select(
+    index,b_y_ttest,b_y_ttest_check
+  ) %T>% 
+  write_tsv(
+    "./figures/fig2o.tsv"
+  ) %>% 
+  gghistogram(
+    x = "b_y_ttest", 
+    add = "median", rug = TRUE,
+    fill = "b_y_ttest_check", palette = c("#9E0142", "#5E4FA2"),
+    binwidth = 0.025,
+    position = "stack",
+    size = 0.25
+  )+
+  labs(x=expression(italic(P)-value),y="Count")+
+  #scale_x_continuous(limits = c(-0.05,0.05))+
+  theme(
+    legend.position = "none",
+    #axis.title.x = element_blank(),
+    axis.title = element_text(color = "black",size = 7),
+    #axis.text.x = element_blank(),
+    axis.text = element_text(color = "black",size = 7),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave("./figures/2_05_masserror_all.png",width=4.5,height=4.5, units = "cm",dpi = 600)
+```
+
+
+#Fig. 3a
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% 
+  select(
+    gene_position,index,pcc_check,rt_check,b_y_ttest_check
+  ) %>% 
+  write_tsv(
+    "./figures/fig3a.tsv"
+  )
+
+ggVennDiagram(
+  list(
+    # A=summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+    #   filter(p1r_check ==1 | p2gv_check ==1) %>% 
+    #   pull(index),
+    B=summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% 
+      filter(pcc_check == 1) %>% 
+      pull(index),
+    C=summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% 
+      filter(rt_check == 1) %>% 
+      pull(index),
+    D=summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% 
+      filter(b_y_ttest_check == 1) %>% 
+      pull(index)
+  ),
+  category.names = c("MS2","RT","MET"),
+  set_size = 4
+)+
+  theme_void() +
+  scale_fill_distiller(palette = "Reds",direction=1)+
+  scale_color_manual(
+    values = c("black","black","black")
+  )+
+  coord_sf(clip="off")+
+  theme(
+    legend.position = "none",
+    plot.margin = margin(rep(0.5,4),unit="cm")
+  )
+ggsave("./figures/3_01_venn.png",width = 10, height = 10, units = "cm",dpi=600)
+```
+
+#Fig. 3b
+```{r}
+arginylome_validation_matrix3_sequence_distinct %>% 
+  mutate(
+    trinity = if_else(score_sum==3,TRUE,FALSE)
+  ) %>% 
+  select(
+    prot_pos_reposition,Sequence,pcc_check,rt_check,,score_sum,MOCK,MG132,MGTG
+  )
+  write_tsv(
+    "./figures/fig3b.tsv"
+  ) %>% 
+  dplyr::select(trinity,MOCK,MG132,MGTG) %>% 
+  pivot_longer(c(MOCK,MG132,MGTG)) %>% 
+  summarise(
+    .by = c(name,trinity),
+    count = sum(value)
+  ) %>% 
+  ggplot(
+    aes(x=fct(name,level = c("MOCK","MG132","MGTG")),y=count,fill=trinity)
+  )+
+  geom_bar(stat="identity",color="black")+
+  geom_text(aes(label=count),position = position_stack(vjust=0.5),size=3)+
+  scale_x_discrete(
+    label = c("MOCK","MG132","MG132 + TG")
+  )+
+  scale_fill_manual(
+    values = c(wesanderson::wes_palette("Royal1")[2],wesanderson::wes_palette("Royal1")[3])
+  )+
+  labs(x="Experiment",y="PSM Count",fill="TrinityNmod")+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.text = element_text(color="black")
+  )
+ggsave("./figures/3_02_removed_arg_drug_model.png",width=8,height=8, units = "cm",dpi = 600)
+```
+
+
+
+#Fig. 3d
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  mutate(
+    trinity = if_else(dl_score == 3,1,0)
+  ) %>% 
+  mutate(
+    trinity_failed = if_else(dl_score != 3,1,0)
+  ) %>%
+  select(
+    index,diagnostic_ion_int_relative,trinity_failed,pcc_check,rt_check,b_y_ttest_check,trinity
+  ) %>% 
+  mutate(
+    diagnostic_ion_int_relative = replace_na(diagnostic_ion_int_relative,0)
+  ) %>% 
+  pivot_longer(
+    trinity_failed:trinity
+  ) %>% 
+  filter(value == 1) %T>% 
+  write_tsv(
+    "./figures/3_05_diagnostic_tests.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=fct(name,levels = c("trinity_failed","pcc_check","rt_check","b_y_ttest_check","trinity")),y=diagnostic_ion_int_relative)
+  )+
+  geom_violin(
+    scale = "width",
+    aes(fill = fct(name,levels = c("trinity_failed","pcc_check","rt_check","b_y_ttest_check","trinity"))),
+    linewidth = 0.25
+  )+
+  geom_boxplot(width = 0.2,outlier.size = 0.25,linewidth = 0.25)+
+  scale_y_continuous(labels=label_percent())+
+  scale_x_discrete(
+    labels = c("None","PCC","RT","MET","All")
+  )+
+  scale_fill_manual(
+    values = wes_palette("Darjeeling1",5,type="discrete")
+  )+
+  stat_compare_means(
+    comparisons = list(c("pcc_check","trinity"),c("rt_check","trinity"),c("b_y_ttest_check","trinity")), label.y = c(0.9,0.8,0.7),
+    p.adjust.methods="fdr",
+    size = 2
+  )+
+  labs(
+    x="Filtering Module",y="Diagnostic Ion Intensity %"
+  )+
+  scale_y_continuous(
+    breaks = c(0,0.25,0.5,0.75,1),
+    limits = c(0,1)
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    #axis.title.x = element_blank(),
+    axis.title = element_text(color = "black",size = 7),
+    #axis.text.x = element_blank(),
+    axis.text = element_text(color = "black",size = 7),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave("./figures/3_05_diagnostic_tests.png",width = 4.5, height = 4.5, units = "cm",dpi=600)
+```
+
+#Fig. 3e
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% 
+  distinct(Sequence,.keep_all = TRUE) %>% #339
+  filter(
+    score_sum == 3
+  ) %>% 
+  mutate(
+    p5p5prime = str_replace(p5p5prime,"(?<=.....).","X")
+  ) %>% 
+  select(
+    index,p5p5prime
+  ) %T>% 
+  write_tsv(
+    "./figures/figure3e.tsv"
+  ) %>% 
+  pull(p5p5prime) %>% 
+  ggseqlogo(
+  )+
+  theme(
+    legend.position = "none"
+  ) -> fig_logo
+  
+fig_logo$scales$scales[[1]]$labels <- c("P5","P4","P3","P2","P1","P1'","P2'","P3'","P4'","P5'")
+fig_logo
+ggsave("./figures/figure3e.png",width = 8,height = 8, units = "cm", dpi = 600)
+  
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% 
+  distinct(Sequence,.keep_all = TRUE) %>% #339
+  filter(
+    score_sum != 3
+  ) %>% 
+  mutate(
+    p5p5prime = str_replace(p5p5prime,"(?<=.....).","X")
+  ) %>% 
+  select(
+    index,p5p5prime
+  ) %>% 
+  write_tsv(
+    "./figures/figure3e_2.tsv"
+  ) %>%
+  pull(p5p5prime) %>% 
+  ggseqlogo(
+  )+
+  theme(
+    legend.position = "none"
+  ) -> fig_logo
+  
+fig_logo$scales$scales[[1]]$labels <- c("P5","P4","P3","P2","P1","P1'","P2'","P3'","P4'","P5'")
+fig_logo
+ggsave("./figures/figure3e_2.png",width = 8,height = 8, units = "cm", dpi = 600)
+```
+
+
+#Fig. 3f
+```{r}
+alphafold_fetched_tidied2 %>% 
+  write_tsv(
+    "./figures/alphafold.tsv"
+  )
+
+alphafold_fetched_tidied2 %>% 
+  dplyr::filter(score_sum == 3) %>% 
+  write_tsv(
+    "./figures/3_02_alphafold_mlfitered.tsv"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(as.character(mod_position)),
+      y=prediction_score,
+      fill = fct(as.character(mod_position))
+    )
+  )+
+  geom_boxplot(
+    linewidth = 0.25
+  )+
+  lims(y=c(20,100))+
+  labs(
+    x = "Arginylation Position", y = "AlphaFold pLDDT score"
+  )+
+  scale_x_discrete(
+    labels = c(
+      "-10","",
+      "-8","",
+      "-6","",
+      "-4","",
+      "-2","",
+      "0","",
+      "2","",
+      "4","",
+      "6","",
+      "8","",
+      "10"
+    )
+  )+
+  theme_classic()+
+  theme( 
+    legend.position = "none",
+    axis.title = element_blank(),
+    #axis.title = element_text(color = "black",size = 7),
+    #axis.text.x = element_blank(),
+    axis.text = element_text(color = "black",size = 7),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave("./figures/3_02_alphafold_mlfitered.png",width=4.5,height=4.5,dpi = 600,units="cm")
+
+alphafold_fetched_tidied2 %>% 
+  dplyr::filter(score_sum != 3) %>% 
+  write_tsv(
+    "./figures/3_02_alphafold_mlfitered_not.tsv"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(as.character(mod_position)),
+      y=prediction_score,
+      fill = fct(as.character(mod_position))
+    )
+  )+
+  geom_boxplot(
+    linewidth = 0.25,
+    outlier.size = 0.25
+  )+
+  lims(y=c(20,100))+
+  labs(
+    x = "Arginylation Position", y = "AlphaFold pLDDT score"
+  )+
+  scale_x_discrete(
+    labels = c(
+      "-10","",
+      "-8","",
+      "-6","",
+      "-4","",
+      "-2","",
+      "0","",
+      "2","",
+      "4","",
+      "6","",
+      "8","",
+      "10"
+    )
+  )+
+  theme_classic()+
+  theme( 
+    legend.position = "none",
+    axis.title = element_blank(),
+    #axis.title = element_text(color = "black",size = 7),
+    #axis.text.x = element_blank(),
+    axis.text = element_text(color = "black",size = 7),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave("./figures/3_02_alphafold_mlfitered_not.png",width=4.5,height=4.5,dpi = 600,units="cm")
+
+```
+# Fig. 4a
+```{r}
+arginylome_validation_matrix3_sequence_distinct %>% 
+  filter(score_sum == 3) %>%
+  select(
+    prot_pos_master,prot_pos_reposition,MOCK,MG132,MGTG,score_sum
+  ) %>% 
+  write_tsv(
+    "./figures/fig4a.tsv"
+  )
+  
+ggVennDiagram(
+  list(
+    # A=summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+    #   filter(p1r_check ==1 | p2gv_check ==1) %>% 
+    #   pull(index),
+    B=arginylome_validation_matrix3_sequence_distinct %>% 
+      filter(MOCK >0 & score_sum == 3) %>% pull(prot_pos_master),
+    C=arginylome_validation_matrix3_sequence_distinct %>% 
+      filter(MG132 >0 & score_sum == 3) %>% pull(prot_pos_master),
+    D=arginylome_validation_matrix3_sequence_distinct %>% 
+      filter(MGTG >0 & score_sum == 3) %>% pull(prot_pos_master)
+  ),
+  category.names = c("MOCK","MG132","MGTG"),
+  set_size = 4
+)+
+  theme_void() +
+  scale_fill_distiller(palette = "Reds",direction=1)+
+  scale_color_manual(
+    values = c("black","black","black")
+  )+
+  coord_sf(clip="off")+
+  theme(
+    legend.position = "none",
+    plot.margin = margin(rep(0.5,4),unit="cm")
+  )
+ggsave("./figures/3_01_venn_sites.png",width = 10, height = 10, units = "cm",dpi=600)
+```
+
+
+# Fig. 4b
+```{r}
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+  filter(MOCK >0) %>% pull(gene) -> go_input
+as_tibble(AnnotationDbi::select(org.Hs.eg.db,keys=go_input, columns=c("SYMBOL","ENTREZID"),keytype="SYMBOL")) %>% 
+  pull(ENTREZID) -> pa_input
+
+enrichPathway(
+  pa_input,
+  readable = TRUE,
+  pvalueCutoff = 0.05
+) %>% .@result %>%  arrange(qvalue) -> pa_enriched_mock
+
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+  filter(MG132 >0) %>% pull(gene) -> go_input
+as_tibble(AnnotationDbi::select(org.Hs.eg.db,keys=go_input, columns=c("SYMBOL","ENTREZID"),keytype="SYMBOL")) %>% 
+  pull(ENTREZID) -> pa_input
+
+enrichPathway(
+  pa_input,
+  readable = TRUE,
+  pvalueCutoff = 0.05
+) %>% .@result %>%  arrange(qvalue) -> pa_enriched_mg
+
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+  filter(MGTG >0) %>% pull(gene) -> go_input
+as_tibble(AnnotationDbi::select(org.Hs.eg.db,keys=go_input, columns=c("SYMBOL","ENTREZID"),keytype="SYMBOL")) %>% 
+  pull(ENTREZID) -> pa_input
+
+enrichPathway(
+  pa_input,
+  readable = TRUE,
+  pvalueCutoff = 0.05
+) %>% .@result %>%  arrange(qvalue) -> pa_enriched_mgtg
+
+pa_enriched_mock %>% 
+  mutate(
+    experiment = "MOCK"
+  ) %>% 
+  bind_rows(
+    pa_enriched_mg %>% 
+      mutate(
+        experiment = "MG132"
+      )
+  )%>% 
+  bind_rows(
+    pa_enriched_mgtg %>% 
+      mutate(
+        experiment = "MGTG"
+      )
+  ) -> pa_enriched_all
+
+pa_enriched_all %>% 
+  mutate(
+    Description = str_replace(Description,"(?<=.{10}[:blank:]in)[:blank:]","\n"),
+    Description = str_replace(Description,"(?<=.{15}[:blank:]by)[:blank:]","\n"),
+    Description = str_replace(Description,"\\(ATF6\\-alpha\\)[:blank:]",""),
+  ) %>% 
+  select(ID,Description,experiment,pvalue) %>% 
+  pivot_wider(
+    id_cols = c(ID,Description),
+    names_from = experiment,
+    values_from = pvalue
+  ) %>% 
+  mutate(
+    all = MOCK*MG132*MGTG
+  ) %>% 
+  arrange(all) %>% 
+  slice_head(n=10) %>% pull(Description) -> pa_description
+
+pa_enriched_all %>% 
+  mutate(
+    Description = str_replace(Description,"(?<=.{10}[:blank:]in)[:blank:]","\n"),
+    Description = str_replace(Description,"(?<=.{15}[:blank:]by)[:blank:]","\n"),
+    Description = str_replace(Description,"\\(ATF6\\-alpha\\)[:blank:]",""),
+  ) %>%
+  select(ID,Description,experiment,pvalue) %>% 
+  pivot_wider(
+    id_cols = c(ID,Description),
+    names_from = experiment,
+    values_from = pvalue
+  ) %>%
+  filter(
+    Description %in% pa_description
+  ) %>%
+  pivot_longer(
+    MOCK:MGTG
+  ) %>% 
+  arrange(value) -> pa_enriched_all_fig
+
+pa_enriched_all_fig %T>% 
+  write_tsv(
+    "./figures/4_11_tile_RA_all_main_legend.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=fct(name,levels=c("MOCK","MG132","MGTG")),y=fct(Description,levels = rev(pa_description)),fill = -log(value,10))
+  )+
+  geom_tile()+
+  scale_fill_distiller(
+    palette = "YlOrRd",
+    direction = 1,
+    na.value = "grey80"
+  )+
+  labs(
+    x="Experiment",
+    y="Reactome",
+    fill = "Q value"
+  )+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 7,angle = 45, hjust=1),
+    axis.text.y =element_text(color = "black",size= 6),
+    axis.title = element_text(color = "black",size= 7),
+    plot.title = element_text(color = "black",size= 7),
+    legend.position = "none",
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 7),
+    legend.text = element_text(color = "black",size= 7)
+  )
+ggsave(
+  "./figures/4_11_tile_RA_all_main_legend.png",height = 5, width =6,dpi = 600,units = "cm"
+)
+
+
+```
+
+
+# Fig. 4d
+```{r}
+peptide_lfq_trinity %>% 
+  pivot_longer(MG132_1_Free:MOCK_2_Arg) %>% 
+  drop_na(value) %>% 
+  mutate(
+    experiment = str_split_i(name,"_",1),
+    arg = str_split_i(name,"_",3),
+    protease = if_else(!is.na(cleavage_type),"T","F")
+  ) %>% 
+  pivot_wider(
+    id_cols = c(Sequence:cleavage_name,arg,protease),
+    names_from = experiment,
+    values_from = value,
+    values_fn = \(x) mean(x)
+  ) %>% 
+  mutate(
+    MGTG_MOCK = MGTG-MOCK,
+    MGTG_MG132 = MGTG-MG132
+  ) %>% 
+  select(-c(MG132,MGTG,MOCK)) %>% 
+  pivot_longer(
+    MGTG_MOCK:MGTG_MG132
+  ) %>% 
+  filter(
+    name == "MGTG_MG132"
+  ) %T>% 
+  write_tsv(
+    "./figures/fig4d.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=protease,y=value,fill=protease)
+  )+
+  geom_violin(linewidth = 0.2,scale="width")+
+  geom_boxplot(width = 0.1,linewidth = 0.2,outlier.size = 0)+
+  # facet_grid(
+  #   cols=vars(protease),
+  #   rows = vars(arg)
+  # )+
+  
+  scale_fill_manual(
+    values =c(wesanderson::wes_palette(4,name="GrandBudapest1",type="discrete")[c(1,2)])
+  )+
+  scale_x_discrete(
+    labels = c("False","True")
+  )+
+  labs(x="Cleavage", y=bquote(~Delta*Z-Score~(MGTG-MG132)))+
+  stat_compare_means(
+    comparisons = list(c("T","F")),
+    label = "p.format",
+    method="t.test",
+    #label.y = c(4,4.8,4.3),
+    size = 2.5
+  )+
+  lims(
+    y=c(-2,2.5)
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size=7),
+    axis.text = element_text(size=6,color = "black"),
+    strip.text = element_text(size=6)
+  )
+ggsave(
+  "./figures/fig4d.png",width=4,height=4,dpi = 600,units="cm"
+)
+  
+peptide_lfq_trinity %>% 
+  pivot_longer(MG132_1_Free:MOCK_2_Arg) %>% 
+  drop_na(value) %>%
+  mutate(
+    experiment = str_split_i(name,"_",1),
+    arg = str_split_i(name,"_",3),
+    protease = if_else(!is.na(cleavage_type),TRUE,FALSE)
+  ) %>% 
+  filter(arg == "Arg") %>% 
+  filter(protease == FALSE) %>% 
+  ggplot(
+    aes(x= factor(experiment, levels = c("MOCK","MG132","MGTG")), y = value, fill = factor(experiment, levels = c("MOCK","MG132","MGTG")))
+  )+
+  geom_violin(linewidth = 0.2,scale="width")+
+  geom_boxplot(width = 0.1,linewidth = 0.2,outlier.size = 0)+
+  labs(x="Experiments", y="Z-score",fill="name")+
+  stat_compare_means(
+    comparisons = list(c("MOCK","MG132"),c("MOCK","MGTG"),c("MG132","MGTG")),
+    label = "p.signif",
+        method="t.test",
+        #label.y = c(2,2.7,3.4),
+        size = 2
+  )+
+  scale_fill_manual(
+    values =c(wesanderson::wes_palette(5,name="Zissou1",type="discrete")[c(1,3,5)]),
+    labels = c("MOCK","MG132","MGTG")
+  )+
+  lims(
+    y=c(-3.1,5.5)
+  )+
+  theme_classic2()+
+  labs(x="Experiments", y="Z-score")+
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size=7),
+    axis.text = element_text(size=6,color = "black"),
+    strip.text = element_text(size=6)
+  )
+
+
+```
+
+# Fig. 4e-g
+```{r}
+peptide_lfq_trinity_distinct_arg %>% 
+  mutate(
+    signal = if_else(gene_position %in% gene_position_signal, TRUE, FALSE),
+    caspase3 = if_else(gene_position %in% gene_position_casp3, TRUE, FALSE),
+    transit = if_else(gene_position %in% gene_position_transit, TRUE, FALSE),
+  ) %>% 
+  write_tsv(
+    "./figures/fig4e_g.tsv"
+  )
+```
+
+##caspase-3
+```{r}
+peptide_lfq_trinity_distinct_arg %>% 
+  filter(
+    gene_position %in% gene_position_casp3
+  ) %>% 
+  pivot_longer(MG132:MOCK) %>% 
+  ggplot()+
+  aes(x= factor(name, levels = c("MOCK","MG132","MGTG")), y = value, fill = factor(name, levels = c("MOCK","MG132","MGTG")))+
+  geom_violin(linewidth = 0.2)+
+  geom_boxplot(width = 0.1,linewidth = 0.2,outlier.size = 0)+
+  stat_compare_means(
+    comparisons = list(c("MOCK","MG132"),c("MG132","MGTG"),c("MOCK","MGTG")),
+    label = "p.signif",
+    method="t.test",
+    #label.y = c(2,2.7,3.4),
+    size = 2
+  )+
+  labs(x="Experiments", y="Z-score")+
+  scale_fill_manual(values =c(wes_palette("Zissou1",5)[c(1,3,5)]))+
+  lims(y = c(-2,3))+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size=7),
+    axis.text = element_text(size=6,color = "black"),
+    strip.text = element_text(size=6)
+  )
+ggsave("./figures/4_06_cleavage_violin_casp3.png",width=4,height=4,dpi = 600,units="cm")
+```
+
+## signal
+```{r}
+peptide_lfq_trinity_distinct_arg %>% 
+  filter(
+    gene_position %in% gene_position_signal
+  ) %>% 
+  pivot_longer(MG132:MOCK) %>% 
+  ggplot()+
+  aes(x= factor(name, levels = c("MOCK","MG132","MGTG")), y = value, fill = factor(name, levels = c("MOCK","MG132","MGTG")))+
+  geom_violin(linewidth = 0.2)+
+  geom_boxplot(width = 0.1,linewidth = 0.2,outlier.size = 0)+
+  stat_compare_means(
+    comparisons = list(c("MOCK","MG132"),c("MG132","MGTG"),c("MOCK","MGTG")),
+    label = "p.signif",
+    method="t.test",
+    #label.y = c(2,2.7,3.4),
+    size = 2
+  )+
+  labs(x="Experiments", y="Z-score")+
+  scale_fill_manual(values =c(wes_palette("Zissou1",5)[c(1,3,5)]))+
+  lims(y = c(-2,3))+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size=7),
+    axis.text = element_text(size=6,color = "black"),
+    strip.text = element_text(size=6)
+  )
+ggsave("./figures/4_06_cleavage_violin_signal.png",width=4,height=4,dpi = 600,units="cm")
+```
+
+##transit
+```{r}
+peptide_lfq_trinity_distinct_arg %>% 
+  filter(
+    gene_position %in% gene_position_transit
+  ) %>% 
+  pivot_longer(MG132:MOCK) %>% 
+  ggplot()+
+  aes(x= factor(name, levels = c("MOCK","MG132","MGTG")), y = value, fill = factor(name, levels = c("MOCK","MG132","MGTG")))+
+  geom_violin(linewidth = 0.2)+
+  geom_boxplot(width = 0.1,linewidth = 0.2,outlier.size = 0)+
+  stat_compare_means(
+    comparisons = list(c("MOCK","MG132"),c("MG132","MGTG"),c("MOCK","MGTG")),
+    label = "p.signif",
+    method="t.test",
+    #label.y = c(2,2.7,3.4),
+    size = 2
+  )+
+  labs(x="Experiments", y="Z-score")+
+  scale_fill_manual(values =c(wes_palette("Zissou1",5)[c(1,3,5)]))+
+  lims(y = c(-2,3))+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size=7),
+    axis.text = element_text(size=6,color = "black"),
+    strip.text = element_text(size=6)
+  )
+ggsave("./figures/4_06_cleavage_violin_transit.png",width=4,height=4,dpi = 600,units="cm")
+
+peptide_lfq_trinity_distinct_arg %>% 
+  filter(
+    gene_position %in% gene_position_casp6
+  ) %>% 
+  pivot_longer(MG132:MOCK) %>% 
+  ggplot()+
+  aes(x= factor(name, levels = c("MOCK","MG132","MGTG")), y = value, fill = factor(name, levels = c("MOCK","MG132","MGTG")))+
+  geom_violin(linewidth = 0.2)+
+  geom_boxplot(width = 0.1,linewidth = 0.2,outlier.size = 0)+
+  stat_compare_means(
+    comparisons = list(c("MOCK","MG132"),c("MG132","MGTG"),c("MOCK","MGTG")),
+    label = "p.signif",
+    method="t.test",
+    #label.y = c(2,2.7,3.4),
+    size = 2
+  )+
+  labs(x="Experiments", y="Z-score")+
+  scale_fill_manual(values =c(wes_palette("Zissou1",5)[c(1,3,5)]))+
+  lims(y = c(-2,3))+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size=7),
+    axis.text = element_text(size=6,color = "black"),
+    strip.text = element_text(size=6)
+  )
+ggsave("./figures/4_06_cleavage_violin_casp6.png",width=4,height=4,dpi = 600,units="cm")
+```
+
+
+# Fig. 4i
+##SHMT2
+```{r}
+#SHMT2
+j=125
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered_trinity$index[j] -> target_scan
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered_trinity |> 
+  dplyr::filter(
+    index == target_scan
+  ) -> spectrum_file_plot
+
+spectrum_file_plot$sequence_for_fragspec -> title1
+spectrum_file_plot$index -> subtitle1 ##index!
+round(spectrum_file_plot$PCC,3) -> title2 ##pcc
+spectrum_file_plot$`MHplus in Da` -> spec_plot_xmax
+spectrum_file_plot$gene_position -> title3
+
+spectrum_file_plot %>% select(peak_table_for_graph) %>%
+  unnest(cols=peak_table_for_graph) %>% filter(
+    !is.na(matches)
+  ) %>% 
+  arrange(desc(frag)) %>% 
+  slice_head(n=1) %>% 
+  pull(frag)->graph_frag_max
+
+spectrum_file_plot %>% select(peak_table_for_graph) %>%
+  unnest(cols=peak_table_for_graph) %>% filter(
+    !is.na(matches)
+  ) %>% 
+  arrange(desc(`m/z`)) %>% 
+  slice_head(n=1) %>% 
+  pull(`m/z`) -> spec_plot_xmax
+#summary_filtered_PRM_table_final_DL_library_merged_spec_DLspec_crossed$pearson_correl_coeff[j] |> round(digits = 4) -> subtitle2
+#summary_filtered_PRM_table_final_DL_library_merged_spec_DLspec_crossed$cosine_similarity [j] |> round(digits = 4) -> subtitle3
+spectrum_file_plot %>% select(peak_table_for_graph) %>%
+  unnest(cols=peak_table_for_graph) %>% 
+  mutate(
+    frag = if_else(frag>=0,frag/graph_frag_max,frag)
+  ) %T>% 
+  write_tsv(
+    "./figures/fig4i_shmt2.tsv"
+  ) %>% 
+  ggplot( 
+    aes(x=`m/z`,y=frag, label = series)
+  )+
+  geom_bar(stat="identity",width = 0.2)+
+  geom_col(aes(fill = series),width = spec_plot_xmax/1000)+
+  geom_text(aes(y=if_else(frag<0,frag-0.28,frag),label=ion_type,color= series),angle=90,hjust=-0.05,vjust=0.5,size=1.1, na.rm = TRUE)+
+  # ggrepel::geom_text_repel(
+  #   size=2,
+  #   alpha = 0.2,
+  #   color = "black",
+  #   angle= 90,
+  #   nudge_x = 10,
+  #   #nudge_y = 1000,
+  #   box.padding = 0.1,
+  #   na.rm = TRUE,
+  #   direction = "x",
+  #   min.segment.length = 0.5,
+  #   ylim = c(0.4,0.8)
+  # )+
+  geom_hline(yintercept = 0, color = "black")+
+  scale_fill_manual(
+    values = c("b"=RColorBrewer::brewer.pal(n=9,"Set1")[1],"y"=RColorBrewer::brewer.pal(n=9,"Set1")[2]),
+    na.value = NA
+  )+
+  scale_color_manual(
+    values = c("b"=RColorBrewer::brewer.pal(n=9,"Set1")[1],"y"=RColorBrewer::brewer.pal(n=9,"Set1")[2]),
+    na.value = NA
+  )+
+  scale_x_continuous(limits=c(0, spec_plot_xmax+100),expand=c(0,0))+ #limits=c(250,800),
+  scale_y_continuous(breaks = c(1,0.5,0,-0.5,-1),labels = scales::percent(c(1,0.5,0,0.5,1)), limits=c(-1.4,1.4),expand=c(0,0))+
+  theme_classic()+
+  labs(x="m/z",y="Normalized Intensity", fill = "Ion Type", color = "Ion Type", title = paste0(title1,"  PCC=",title2))+
+  theme(
+    legend.position = "none",
+    plot.subtitle = element_text(size=8, color="black"),
+    axis.text.x = element_text(color = "black",size= 7),
+    axis.text.y =element_text(color = "black",size= 7),
+    axis.title = element_text(color = "black",size= 8),
+    axis.title.y = element_blank(),
+    plot.title = element_text(color = "black",size= 7),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave(paste0("./figures/shmt2.png"), width=10, height = 3, units = "cm", dpi = 600)
+```
+
+##MTHFD2
+```{r}
+j=323
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered_trinity$index[j] -> target_scan
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered_trinity |> 
+  dplyr::filter(
+    index == target_scan
+  ) -> spectrum_file_plot
+
+spectrum_file_plot$sequence_for_fragspec -> title1
+spectrum_file_plot$index -> subtitle1 ##index!
+round(spectrum_file_plot$PCC,3) -> title2 ##pcc
+spectrum_file_plot$`MHplus in Da` -> spec_plot_xmax
+spectrum_file_plot$gene_position -> title3
+
+spectrum_file_plot %>% select(peak_table_for_graph) %>%
+  unnest(cols=peak_table_for_graph) %>% filter(
+    !is.na(matches)
+  ) %>% 
+  arrange(desc(frag)) %>% 
+  slice_head(n=1) %>% 
+  pull(frag)->graph_frag_max
+
+spectrum_file_plot %>% select(peak_table_for_graph) %>%
+  unnest(cols=peak_table_for_graph) %>% filter(
+    !is.na(matches)
+  ) %>% 
+  arrange(desc(`m/z`)) %>% 
+  slice_head(n=1) %>% 
+  pull(`m/z`) -> spec_plot_xmax
+#summary_filtered_PRM_table_final_DL_library_merged_spec_DLspec_crossed$pearson_correl_coeff[j] |> round(digits = 4) -> subtitle2
+#summary_filtered_PRM_table_final_DL_library_merged_spec_DLspec_crossed$cosine_similarity [j] |> round(digits = 4) -> subtitle3
+spectrum_file_plot %>% select(peak_table_for_graph) %>%
+  unnest(cols=peak_table_for_graph) %>% 
+  mutate(
+    frag = if_else(frag>=0,frag/graph_frag_max,frag)
+  ) %T>% 
+  write_tsv(
+    "./figures/fig4i_mthfd2.tsv"
+  ) %>% 
+  ggplot( 
+    aes(x=`m/z`,y=frag, label = series)
+  )+
+  geom_bar(stat="identity",width = 0.2)+
+  geom_col(aes(fill = series),width = spec_plot_xmax/1000)+
+  geom_text(aes(y=if_else(frag<0,frag-0.28,frag),label=ion_type,color= series),angle=90,hjust=-0.05,vjust=0.5,size=1.1, na.rm = TRUE)+
+  # ggrepel::geom_text_repel(
+  #   size=2,
+  #   alpha = 0.2,
+  #   color = "black",
+  #   angle= 90,
+  #   nudge_x = 10,
+  #   #nudge_y = 1000,
+  #   box.padding = 0.1,
+  #   na.rm = TRUE,
+  #   direction = "x",
+  #   min.segment.length = 0.5,
+  #   ylim = c(0.4,0.8)
+  # )+
+  geom_hline(yintercept = 0, color = "black")+
+  scale_fill_manual(
+    values = c("b"=RColorBrewer::brewer.pal(n=9,"Set1")[1],"y"=RColorBrewer::brewer.pal(n=9,"Set1")[2]),
+    na.value = NA
+  )+
+  scale_color_manual(
+    values = c("b"=RColorBrewer::brewer.pal(n=9,"Set1")[1],"y"=RColorBrewer::brewer.pal(n=9,"Set1")[2]),
+    na.value = NA
+  )+
+  scale_x_continuous(limits=c(0, spec_plot_xmax+100),expand=c(0,0))+ #limits=c(250,800),
+  scale_y_continuous(breaks = c(1,0.5,0,-0.5,-1),labels = scales::percent(c(1,0.5,0,0.5,1)), limits=c(-1.4,1.4),expand=c(0,0))+
+  theme_classic()+
+  labs(x="m/z",y="Normalized Intensity", fill = "Ion Type", color = "Ion Type", title = paste0(title1,"  PCC=",title2))+
+  theme(
+    legend.position = "none",
+    plot.subtitle = element_text(size=8, color="black"),
+    axis.text.x = element_text(color = "black",size= 7),
+    axis.text.y =element_text(color = "black",size= 7),
+    axis.title = element_text(color = "black",size= 8),
+    axis.title.y = element_blank(),
+    plot.title = element_text(color = "black",size= 7),
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8),
+    plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+  )
+ggsave(paste0("./figures/mthfd2.png"), width=10, height = 3, units = "cm", dpi = 600)
+
+```
+
+
+
+#Supplement Fig. 2
+```{r}
+#a
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  distinct(Sequence,.keep_all = TRUE) %>%
+  select(
+    Sequence,p5p5prime
+  ) %T>% 
+  write_tsv(
+    "./figures/sfig2a.tsv"
+  ) %>% 
+  pull(p5p5prime) %>% 
+  ggseqlogo(
+  )+
+  theme(
+    legend.position = "none"
+  )
+ggsave("./figures/1_02_logo1_ednq_p5p5prime_all.png",width = 8,height = 8, units = "cm", dpi = 600)
+
+#b
+ 
+prepareProteomeByFTP(
+  source = NULL, 
+  species = "Homo sapiens",
+  fastaFile="UP000005640_9606_2301.fasta"
+) -> logo_proteome
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  distinct(Sequence,.keep_all = TRUE) %>% 
+  select(
+    Sequence,p5p1
+  ) %T>% 
+  write_tsv(
+    "./figures/sfig2b.tsv"
+  ) %>%
+  pull(p5p1)
+
+formatSequence(
+  seq = summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% distinct(Sequence,.keep_all = TRUE) %>% pull(p5p1),
+  proteome = logo_proteome, 
+  upstreamOffset = 5,
+  downstreamOffset = 1
+) -> dag_seq2
+
+
+bg_fisher2 <- buildBackgroundModel(dag_seq2, background = "wholeProteome",proteome = logo_proteome, testType = "fisher")
+
+png("./figures/1_02_dag_heatmap_all.png", width = 10, height = 10, units = "cm", res = 600)
+dagHeatmap(
+  testDAU(dag_seq2, dagBackground = bg_fisher2),
+  type="diff",
+  labels_col = c("P5","P4","P3","P2","P1"),
+  display_numbers = TRUE
+)
+dev.off()
+
+#c
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  distinct(Sequence,.keep_all = TRUE) %>% #339
+  filter(p1r_check==1) %>% 
+  filter(enzyme =="trypsin") %>% 
+  select(
+    Sequence,p1r_check,p5p1
+  ) %T>% 
+  write_tsv(
+    "./figures/sfig2c.tsv"
+  ) %>%
+  pull(p5p1) %>% 
+  ggseqlogo(
+  )+
+  theme(
+    legend.position = "none"
+  )->fig_logo
+
+fig_logo$scales$scales[[1]]$labels <- c("P5","P4","P3","P2","P1")
+
+fig_logo
+
+ggsave("./figures/1_02_logo2_p1r.png",width = 8,height = 8, units = "cm", dpi = 600)
+
+
+#d
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% 
+  distinct(Sequence,.keep_all = TRUE) %>% #339
+  mutate(
+    p5p5prime = str_replace(p5p5prime,"(?<=.....).","X")
+  ) %>% 
+  select(
+    Sequence,p5p5prime
+  ) %T>% 
+  write_tsv(
+    "./figures/sfig2c.tsv"
+  ) %>%
+  pull(p5p5prime) %>% 
+  ggseqlogo(
+  )+
+  theme(
+    legend.position = "none"
+  )
+ggsave("./figures/1_02_logo2_ednq_p5p5prime_p1r_p2gv_removed_enlarged.png",width = 8,height = 8, units = "cm", dpi = 600)
+
+#e
+formatSequence(
+  seq = summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% distinct(Sequence,.keep_all = TRUE) %>% pull(p5p1),
+  proteome = logo_proteome, 
+  upstreamOffset = 5,
+  downstreamOffset = 1
+) -> dag_seq3
+
+
+bg_fisher3 <- buildBackgroundModel(dag_seq3, background = "wholeProteome", proteome = logo_proteome, testType = "fisher")
+
+png("./figures/1_02_dag_heatmap_p2gv_removed.png", width = 10, height = 10, units = "cm", res = 600)
+
+dagHeatmap(
+  testDAU(dag_seq3, dagBackground = bg_fisher3),
+  type="diff",
+  labels_col = c("P5","P4","P3","P2","P1"),
+  display_numbers = TRUE
+)
+
+dev.off()
+
+```
+
+
+#Supplement Fig. 3
+```{r}
+
+#c
+psm_563516 %>% filter(
+  P1prime == "R" & nmod =="Acetyl:2H(3" & enzyme == "trypsin"
+) %>% select(Sequence,Modifications,RT,P1prime,nmod, enzyme,bion_int_perc,yion_int_perc) %T>% 
+   write_tsv(
+     "./figures/2_02_ion_series_9570.tsv"
+   ) %>% 
+  select(bion_int_perc,yion_int_perc) %>% 
+  pivot_longer(everything()) %>% 
+  ggplot(
+  )+ 
+  geom_histogram(
+    aes(x=value,color = name),
+    fill = "white",alpha=0.5,binwidth = 0.01
+  )+
+  geom_vline(
+    data = psm_563516 %>% 
+      filter(
+        P1prime == "R" & nmod =="Acetyl:2H(3" & enzyme == "trypsin"
+      ) %>% 
+      select(bion_int_perc,yion_int_perc) %>% 
+      pivot_longer(everything()) %>% 
+      drop_na() %>% 
+      summarise(
+        .by = name,
+        grp_mean = mean(value)
+      ),
+    aes(xintercept = grp_mean),color="#4DAF4A", linetype="dashed"
+  )+
+  scale_color_manual(values = c("#377EB8","#E41A1C"))+
+  scale_x_continuous(labels = scales::label_percent())+
+  labs(x="Area Percentage",y="PSM count")+
+  theme_classic2()+
+  theme(legend.position = "none")+
+  facet_grid(name ~.)
+ggsave("./figures/2_02_ion_series_9570.png",width =4, height = 4,dpi = 600)
+
+#d
+psm_563516 %>% filter(
+  P1prime != "R" & nmod =="Acetyl:2H(3" & enzyme == "trypsin"
+) %>% select(Sequence,Modifications,RT,P1prime,nmod, enzyme,bion_int_perc,yion_int_perc) %T>% 
+   write_tsv(
+     "./figures/2_02_ion_series_156125.tsv"
+   ) %>% 
+  select(bion_int_perc,yion_int_perc) %>% 
+  pivot_longer(everything()) %>% 
+  ggplot(
+  )+ 
+  geom_histogram(
+    aes(x=value,color = name),
+    fill = "white",alpha=0.5,binwidth = 0.01
+  )+
+  geom_vline(
+    data = psm_563516 %>% 
+      filter(
+        P1prime != "R" & nmod =="Acetyl:2H(3" & enzyme == "trypsin"
+      ) %>% 
+      select(bion_int_perc,yion_int_perc) %>% 
+      pivot_longer(everything()) %>% 
+      drop_na() %>% 
+      summarise(
+        .by = name,
+        grp_mean = mean(value)
+      ),
+    aes(xintercept = grp_mean),color="#4DAF4A", linetype="dashed"
+  )+
+  scale_color_manual(values = c("#377EB8","#E41A1C"))+
+  scale_x_continuous(labels = scales::label_percent())+
+  labs(x="Area Percentage",y="PSM count")+
+  theme_classic2()+
+  theme(legend.position = "none")+
+  facet_grid(name ~.)
+ggsave("./figures/2_02_ion_series_156125.png",width =4, height = 4,dpi = 600)
+
+#e
+ psm_563516 %>% filter(
+  nmod =="Acetyl:2H(3" & enzyme == "trypsin"
+) %>% 
+  mutate(
+    p1prime = if_else(P1prime =="R","R","Others")
+  ) %>% 
+  select(Sequence,Modifications,RT,nmod, enzyme,p1prime,rt_norm) %T>% 
+   write_tsv(
+     "./figures/2_02_rt.tsv"
+   ) %>% 
+  ggplot()+
+  geom_density(aes(x=rt_norm,fill = p1prime),alpha = 0.5)+
+  labs(x="Normalized RT",y="Density")+
+  theme_classic2()+
+  theme(legend.position = "none")
+ggsave("./figures/2_02_rt.png",width =4, height = 4,dpi = 600)
+
+```
+
+
+#Supplement Fig. 4a-b
+```{r}
+output_prediction_comparison_chymotrypsin %>% 
+  write_tsv(
+    "./figures/sfig4.tsv"
+  )
+
+#a
+
+ output_prediction_comparison_chymotrypsin %>%
+  mutate(
+    model = fct(model,levels=c("built","pretrained","finetuned"))
+  ) %>% 
+  ggplot(aes(x=model,y=PCC))+
+  geom_violin(aes(fill = model),linewidth = 0.1,scale = "width")+
+  labs(y="PCC")+
+  geom_boxplot(width = 0.1,outlier.shape = NA,linewidth = 0.1)+
+  scale_x_discrete(labels =c("Built","Pretrained","Fine-tuned"))+
+  scale_fill_manual(
+    values = c("#4DAF4A","#377EB8","#E41A1C")
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(color = "black",size = 9,angle = 45,hjust=1),
+    axis.text.y = element_text(color = "black",size = 9)
+  )
+ggsave("./figures/2_03_finetuning3.png",width =5, height = 8,dpi = 600,units = "cm")
+
+#b
+output_prediction_comparison_chymotrypsin %>% 
+  mutate(
+    model = fct(model,levels=c("built","pretrained","finetuned"))
+  ) %>% 
+  filter(PCC >= 0.9) %>% 
+  summarize(
+    .by = model,
+    count = n()
+  ) %>% 
+  mutate(
+    perc = count/9569
+  ) %>% 
+  ggplot(aes(x=model,y=perc,fill=model))+
+  geom_bar(stat = "identity")+
+  geom_text(
+    aes(label = scales::percent(perc,accuracy = 0.1)),vjust =-0.3,
+    size =3
+  )+
+  labs(y="PCC \u2265 0.9")+
+  scale_y_continuous(labels = scales::percent,breaks = seq(0,1,0.1),limits = c(0,1))+
+  scale_x_discrete(labels =c("Built","Pretrained","Fine-tuned"))+
+  scale_fill_manual(
+    values = c("#4DAF4A","#377EB8","#E41A1C")
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(color = "black",size = 9,angle = 45,hjust=1),
+    axis.text.y = element_text(color = "black",size = 9)
+  )
+ggsave("./figures/2_03_finetuning4.png",width =5, height = 8,dpi = 600,units = "cm")
+
+```
+
+#Supplement Fig. 4c-e
+```{r}
+###figure generation
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  filter(
+    index==1028
+  ) %>% 
+  pull(peak_table_for_graph) %>% 
+  .[[1]] %>% 
+  write_tsv(
+    "./figures/sfig4c.tsv"
+  )
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  filter(
+    index==336
+  ) %>% 
+  pull(peak_table_for_graph) %>% 
+  .[[1]] %>% 
+  write_tsv(
+    "./figures/sfig4d.tsv"
+  )
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  filter(
+    index==267
+  ) %>% 
+  pull(peak_table_for_graph) %>% 
+  .[[1]] %>% 
+  write_tsv(
+    "./figures/sfig4e.tsv"
+  )
+
+
+for (j in 1:nrow(summaryfile_psm_for_testing3_pcc_rt_hfsm2)){
+  summaryfile_psm_for_testing3_pcc_rt_hfsm2$index[j] -> target_scan #1 >> j
+  summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+    dplyr::filter(
+      index == target_scan
+    ) -> spectrum_file_plot
+  
+  spectrum_file_plot$sequence_for_fragspec -> title1
+  spectrum_file_plot$index -> subtitle1 ##index!
+  round(spectrum_file_plot$PCC,3) -> title2 ##pcc
+  spectrum_file_plot$`MHplus in Da` -> spec_plot_xmax
+  spectrum_file_plot$prot_pos_reposition -> title3
+  spectrum_file_plot %>% select(peak_table_for_graph) %>%
+    unnest(cols=peak_table_for_graph) %>% 
+    ggplot( 
+      aes(x=`m/z`,y=frag, label = ion_type)
+    )+
+    geom_bar(stat="identity",width = 0.2)+
+    geom_col(aes(fill = series),width = spec_plot_xmax/1000)+
+    geom_text(aes(y=if_else(frag<0,frag-0.08,frag),label=ion_type,color= series),angle=90,hjust=-0.05,vjust=0,size=2, na.rm = TRUE)+
+  geom_hline(yintercept = 0, color = "black")+
+    scale_fill_manual(
+      values = c("b"=RColorBrewer::brewer.pal(n=9,"Set1")[2],"y"=RColorBrewer::brewer.pal(n=9,"Set1")[1]),
+      na.value = NA
+    )+
+    scale_color_manual(
+      values = c("b"=RColorBrewer::brewer.pal(n=9,"Set1")[2],"y"=RColorBrewer::brewer.pal(n=9,"Set1")[1]),
+      na.value = NA
+    )+
+    scale_x_continuous(limits=c(0, spec_plot_xmax),expand=c(0,0))+ #limits=c(250,800),
+    scale_y_continuous(breaks = c(1,0.5,0,-0.5,-1),labels = scales::percent(c(1,0.5,0,0.5,1)), limits=c(-1.2,1.2),expand=c(0,0))+
+    theme_classic()+
+    labs(x="m/z",y="Normalized Intensity", fill = "Ion Type", color = "Ion Type", title = paste0(title1,"  ",title3), subtitle = paste0("PCC = ",title2,"  index: ",subtitle1))+
+    theme(
+      legend.position = "none",
+      plot.subtitle = element_text(size=10, color="black")
+    )->mirror_plot1
+  
+  
+  spectrum_file_plot %>% select(peak_table_for_graph) %>%
+    unnest(cols=peak_table_for_graph) %>% 
+    filter(!is.na(ms2error)) %>% 
+    ggplot(
+      aes(x=`m/z`,y=ms2error,color = series)
+    )+
+    geom_point(size=1)+
+    geom_hline(yintercept = 0, color = "black")+
+    scale_color_manual(
+      values = c("b"=RColorBrewer::brewer.pal(n=9,"Set1")[2],"y"=RColorBrewer::brewer.pal(n=9,"Set1")[1])
+    )+
+    scale_x_continuous(
+      limits=c(0, spec_plot_xmax),expand=c(0,0)
+    )+
+    scale_y_continuous(
+      limits = c(-0.05,0.05),
+      labels = \(x) x*1000
+    )+
+    labs(
+      y="Mass error (mDa)"
+    )+
+    theme_bw()+
+    theme(
+      legend.position = "none"
+    )->mirror_plot2
+  ggarrange(
+    mirror_plot1,mirror_plot2,
+    ncol=1,
+    heights = c(2,1),
+    align = "v"
+  )
+  ggsave(paste0("./ms2figures/",j,".png"), width=20, height = 12, units = "cm", dpi = 600)
+}
+```
+
+
+# Supplement Fig. 4f
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  mutate(
+    enzyme = fct(enzyme,levels = c("trypsin","chymotrypsin","All"))
+  ) %>% 
+  bind_rows(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% mutate(
+      enzyme = fct(c("All"),levels = c("trypsin","chymotrypsin","All"))
+    )
+  ) %>% 
+  select(
+    index,enzyme,PCC
+  ) %T>% 
+  write_tsv(
+    "./figures/sfig4f.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=enzyme,y=PCC,fill = enzyme)
+  )+
+  geom_boxplot()+
+  scale_x_discrete(
+    labels = c("Trypsin","Chymotrypsin","All")
+  )+
+  labs(
+    x="Protease"
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.text = element_text(color="black")
+  )
+ggsave("./figures/sfig4f.png",width=8,height=8,dpi = 600,units="cm")
+
+```
+
+#Supplement Fig. 5
+```{r}
+#From bidding_pcc_fdr.R
+
+
+fdr_pcc_negative_set8 %>% 
+  write_tsv(
+    "./figures/sfig5.tsv"
+  )
+
+#b
+fdr_pcc_negative_set7 %>%
+  filter(enzyme == "trypsin") %>% 
+  summarize(
+    .by=fdr,
+    count =n(),
+    percol_score= mean(percolator_score),
+    #.by = moddb_result
+  )
+fdr_pcc_negative_set7 %>% 
+  filter(enzyme == "trypsin") %>% 
+  select(
+    fdr, percolator_score
+  ) %>% 
+  ggplot(
+    aes(x=as.character(fdr),y=percolator_score,fill=as.character(fdr))
+  )+
+  geom_boxplot()+
+  stat_compare_means(
+    aes(label = paste0("p= ",after_stat(p.format))),
+    comparisons = list(c("1","0")),
+    method="t.test",
+    p.adjust.methods="BH"
+  )+
+  labs(y="Percolator Score")+
+  scale_x_discrete(
+    labels= c("TRUE","FALSE")
+  )+
+  ylim(c(-2.5,5.5))+
+  scale_fill_manual(
+    values = c("#4DAF4A","#E41A1C")
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(color = "black",size = 8),
+    axis.text.y = element_text(color = "black",size = 8)
+  )
+ggsave(
+  "./figures/sfig5b.png",width=8,height=8, units = "cm",dpi = 600
+)
+
+#c
+tibble(
+    PCC=as.numeric(auc(roc(response=fdr_pcc_negative_set8$true_set,predictor = fdr_pcc_negative_set8$PCC))),
+    SA=as.numeric(auc(roc(response=fdr_pcc_negative_set8$true_set,predictor = fdr_pcc_negative_set8$SA))),
+                   SPC=as.numeric(auc(roc(response=fdr_pcc_negative_set8$true_set,predictor = fdr_pcc_negative_set8$SPC))), ## 0.5263
+                   specFPR=as.numeric(auc(roc(response=fdr_pcc_negative_set8$true_set,predictor = fdr_pcc_negative_set8$spec_FDR))), #0.5015
+                   specFNR=as.numeric(auc(roc(response=fdr_pcc_negative_set8$true_set,predictor = fdr_pcc_negative_set8$spec_FNR))), ##0.481
+                   percolator=as.numeric(auc(roc(response=fdr_pcc_negative_set8$true_set,predictor = fdr_pcc_negative_set8$percolator_score))) #0.4979
+  ) %>% 
+    pivot_longer(everything()) %>% 
+    ggplot(
+      aes(x=fct(name,levels=c("PCC","SA","SPC","specFNR","specFPR","percolator")),y=value)
+    )+
+    geom_bar(stat="identity",fill="black",width = 0.4)+
+    geom_text(aes(label = round(value,3)),hjust=-0.1, size =3,angle =90)+
+    labs(y="AUC of ROC")+
+    scale_y_continuous(limits = c(0,0.7))+
+    theme_classic2()+
+    theme(
+      legend.position = "none",
+      axis.title.x = element_blank(),
+      text= element_text(color = "black", size = 8),
+      axis.text.y = element_text(color = "black", size = 8, hjust=1),
+      axis.text.x = element_text(color = "black", size = 8, angle=45,hjust=1),
+      #axis.title.x = element_blank()
+    )
+  ggsave("./figures/sfig5c.png",width=8,height=8,dpi = 600,units="cm")
+```
+
+
+#Supplement Fig. 6
+```{r}
+for (i in 1:12){
+  summaryfile_psm_for_training_result$set %>% unique -> set_names
+  set_names[i]->set_name
+  summaryfile_psm_for_training_result %>% 
+    filter(set == set_name) %>% 
+    ggplot(aes(x=rt_norm, y=rt_pred))+
+    geom_point(size=0.5,alpha=0.5) +
+    geom_line(aes(y=lwr), color = "red", linetype = "dashed")+
+    geom_line(aes(y=upr), color = "red", linetype = "dashed")+
+    geom_smooth(method=lm, se=TRUE)+
+    lims(x=c(0,1),y=c(0,1))+
+    labs(
+      x="Observed Normalized RT",
+      y="Predicted Normalized RT"
+    )+
+    theme_classic()
+  ggsave(
+    paste0("./figure2/rt_prediction_training_set",set_name,".png"),width=10,height=10,dpi = 600,units="cm"
+  )
+}
+
+summaryfile_psm_for_training_result %>% 
+  write_tsv(
+    "./figures/sfig6.tsv"
+  )
+```
+
+
+#Supplement Fig. 7
+```{r}
+{
+  folder_alphapeptdeep
+  i=1
+  output_prediction_rt_train_result <- tibble()
+  output_prediction_rt_test_result <- tibble()
+  for (i in 1:12){
+    output_prediction_rt_training <- read_tsv(
+      paste0(folder_alphapeptdeep,"output_rt_training_gv_fig2h_",i,".tsv")
+    )[,-1] %>% 
+      arrange(rt_norm) %>% 
+      mutate(file_series= i) %>% 
+      filter(str_detect(sequence,"^R")) %>% 
+      filter(
+        str_detect(mods, "Acetyl\\:2H\\(3\\)@Any")
+      )
+    
+    output_prediction_rt_test <- read_tsv(
+      paste0(folder_alphapeptdeep,"output_rt_testing_gv_fig2h_",i,".tsv")
+    )[,-1] %>% 
+      arrange(rt_norm) %>%
+      mutate(file_series = i)
+    
+    fit_rt_training <- lm(rt_norm ~ rt_pred, data =output_prediction_rt_training)
+    
+    output_prediction_rt_training %>%
+      bind_cols(
+        predict(fit_rt_training, interval = "prediction", level =0.95, newdata = output_prediction_rt_training)
+      )->output_prediction_rt_training
+    
+    
+    output_prediction_rt_test %>% 
+      bind_cols(
+        predict(fit_rt_training, interval = "prediction", level =0.95, newdata = output_prediction_rt_test)
+      )->output_prediction_rt_test
+    
+    
+    output_prediction_rt_train_result %>% 
+      bind_rows(
+        output_prediction_rt_training
+      ) -> output_prediction_rt_train_result
+    
+    output_prediction_rt_test_result %>% 
+      bind_rows(
+        output_prediction_rt_test
+      ) -> output_prediction_rt_test_result
+  }
+  output_prediction_rt_train_result %>% 
+    arrange(
+      spec_idx
+    ) ->output_prediction_rt_train_result
+  
+  output_prediction_rt_test_result %>% 
+    arrange(
+      spec_idx
+    ) ->output_prediction_rt_test_result
+  
+  output_prediction_rt_test_result %>% 
+    mutate(
+      rt_test = if_else(rt_norm > lwr & rt_norm < upr, 1, 0)
+    ) ->output_prediction_rt_test_result
+  
+  output_prediction_rt_train_result %>% 
+    left_join(
+      file_raw_index2 %>% select(-c(left_time,right_time)),
+      join_by(file_series)
+    ) -> output_prediction_rt_train_result
+  
+  output_prediction_rt_train_result %>% 
+    mutate(
+      rt_observed = rt_norm*(right_time-left_time)+left_time,
+      rt_predicted = rt_pred*(right_time-left_time)+left_time,
+      rt_fit = fit*(right_time-left_time)+left_time,
+      rt_lwr = lwr*(right_time-left_time)+left_time,
+      rt_upr = upr*(right_time-left_time)+left_time
+    ) -> output_prediction_rt_train_result
+  
+  output_prediction_rt_test_result %>% 
+    left_join(
+      file_raw_index2,
+      join_by(file_series)
+    ) ->output_prediction_rt_test_result
+  
+  output_prediction_rt_test_result %>% 
+    select(
+      -c(left_time.x,right_time.x)
+    ) %>% 
+    rename(
+      left_time = left_time.y,
+      right_time = right_time.y
+    ) -> output_prediction_rt_test_result
+  
+  output_prediction_rt_test_result %>% 
+    mutate(
+      rt_observed = rt_norm*(right_time-left_time)+left_time,
+      rt_predicted = rt_pred*(right_time-left_time)+left_time,
+      rt_fit = fit*(right_time-left_time)+left_time,
+      rt_lwr = lwr*(right_time-left_time)+left_time,
+      rt_upr = upr*(right_time-left_time)+left_time
+    ) ->output_prediction_rt_test_result
+  
+  
+  output_prediction_rt_train_result
+  output_prediction_rt_test_result
+  
+  
+  ##R, MAE, T90
+  {
+    
+    output_prediction_rt_train_result 
+    output_prediction_rt_test_result 
+    
+    
+    output_prediction_rt_train_result %>% 
+      filter(file_series==1)
+    
+    fit_rt_training <- lm(
+      rt_observed~ rt_predicted, 
+      data =output_prediction_rt_train_result %>% 
+        filter(file_series==1))
+    
+    fit_rt_training %>% tidy()
+    
+    output_prediction_rt_train_result %>% 
+      mutate(t95=rt_upr-rt_lwr) %>% 
+      summarise(
+        .by = c(set,file_series),
+        t95_mean = mean(t95)
+      ) -> summary_rtprediction_t95
+    summary_rtprediction_t95 %>% write_tsv(
+      "./figures/rt/rt_t95.tsv"
+    )
+    
+    summary_rtprediction <- tibble()
+    for (i in 1L:12L){
+      summary_rtprediction %>% 
+        bind_rows(
+          output_prediction_rt_train_result %>% 
+            filter(file_series==i) %>% 
+            metrics(
+              truth = rt_observed, estimate = rt_predicted
+            ) %>% 
+            mutate(
+              file_series =i
+            )
+        )->summary_rtprediction
+    }
+    summary_rtprediction %>% write_tsv("./figures/rt/summary_rtprediction_250210.tsv")
+    
+    output_prediction_rt_train_result %>% 
+      filter(file_series==i) %>% 
+      metrics(
+        truth = rt_observed, estimate = rt_predicted
+      ) %>% 
+      mutate(
+        file_series =i
+      )
+    
+  }
+  
+}
+
+i=1
+for (i in 1L:12L){
+  output_prediction_rt_train_result %>% 
+    filter(file_series == i) %>% 
+    ggplot(aes(x=rt_observed, y=rt_predicted))+
+    geom_point(size=0.5,alpha=0.5) +
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=0,vjust=1.2,
+      label=bquote(
+        ~Delta*italic(t)[95*'%'] == .(str_sub(paste0(summary_rtprediction_t95[i,3]),1,5))*","~R^2==.(summary_rtprediction %>% filter(file_series==i,.metric =="rsq") %>% pull(.estimate) %>% round(3))
+      ),size =4
+    )+
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=0,vjust=3.2,
+      label=bquote(
+        ~MAE==.(summary_rtprediction %>% filter(file_series==i,.metric =="mae") %>% pull(.estimate) %>% round(3))*","~N==.(output_prediction_rt_train_result %>% filter(file_series==i) %>% nrow())
+      ),size =4
+    )+
+    geom_line(aes(x=rt_lwr), color = "red", linetype = "dashed")+
+    geom_line(aes(x=rt_upr), color = "red", linetype = "dashed")+
+    geom_smooth(method=lm, se=TRUE)+
+    #lims(x=c(0,1),y=c(0,1))+
+    labs(
+      x="Observed RT (min)",
+      y="Predicted RT (min)"
+    )+
+    theme_classic2()+
+    theme(
+      axis.text = element_text(color = "black",size=10),
+      axis.title = element_text(color = "black",size=11)
+    )
+  ggsave(
+    paste0("./figures/rt/rt_prediction_training_set",i,".png"),width=10,height=10,dpi = 600,units="cm"
+  )
+}
+  
+{
+  i=1
+  output_prediction_rt_train_result %>% 
+    filter(file_series == i) %>% 
+    ggplot(aes(x=rt_observed, y=rt_predicted))+
+    geom_point(size=0.1,alpha=0.25) +
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=0,vjust=1.2,
+      label=bquote(
+        ~Delta*italic(t)[95*'%'] == .(str_sub(paste0(summary_rtprediction_t95[i,3]),1,5))*","~R^2==.(summary_rtprediction %>% filter(file_series==i,.metric =="rsq") %>% pull(.estimate) %>% round(3))
+      ),size =2
+    )+
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=0,vjust=3.2,
+      label=bquote(
+        ~MAE==.(summary_rtprediction %>% filter(file_series==i,.metric =="mae") %>% pull(.estimate) %>% round(3))*","~N==.(output_prediction_rt_train_result %>% filter(file_series==i) %>% nrow())
+      ),size =2
+    )+
+    geom_line(aes(x=rt_lwr), color = "red", linetype = "dashed",size =0.5)+
+    geom_line(aes(x=rt_upr), color = "red", linetype = "dashed",size =0.5)+
+    geom_smooth(method=lm, se=TRUE, size = 0.5)+
+    #lims(x=c(0,1),y=c(0,1))+
+    labs(
+      x="Observed RT (min)",
+      y="Predicted RT (min)"
+    )+
+    theme_classic2()+
+    theme(
+      legend.position = "none",
+      #axis.title.x = element_blank(),
+      axis.title = element_text(color = "black",size = 7),
+      #axis.text.x = element_blank(),
+      axis.text = element_text(color = "black",size = 6),
+      plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+    )
+  ggsave(
+    paste0("./figures/rt/rt_prediction_training_set_mainfigure",i,".png"),width=4.5,height=4.5,dpi = 600,units="cm"
+  )
+}
+
+output_prediction_rt_test_result %>%
+  filter(
+    rt_test ==1
+  )
+  
+i=1
+for (i in 1L:12L){
+  output_prediction_rt_test_result %>% 
+    filter(file_series == i) %>% 
+    filter(
+      rt_test == 1
+    ) %>% nrow() -> rt_passed_string
+  
+  output_prediction_rt_test_result %>% 
+    filter(file_series == i) %>% nrow() -> rt_total_string
+  
+  output_prediction_rt_test_result %>% 
+    filter(file_series == i) %>% 
+    ggplot(aes(x=rt_observed, y=rt_predicted))+
+    geom_point(size=0.1,alpha=0.25) +
+    geom_line(aes(x=rt_lwr), color = "red", linetype = "dashed",size =0.5)+
+    geom_line(aes(x=rt_upr), color = "red", linetype = "dashed",size =0.5)+
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=-0.1,vjust=1.1,
+      label=bquote(
+        .(rt_passed_string)*"/"*.(rt_total_string)
+      ),size =2
+    )+
+    geom_smooth(method=lm, se=TRUE, size = 0.5)+
+      #lims(x=c(0,1),y=c(0,1))+
+      labs(
+        x="Observed RT (min)",
+        y="Predicted RT (min)"
+      )+
+      theme_classic2()+
+      theme(
+        legend.position = "none",
+        #axis.title.x = element_blank(),
+        axis.title = element_text(color = "black",size = 7),
+        #axis.text.x = element_blank(),
+        axis.text = element_text(color = "black",size = 6),
+        plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm")
+      )
+  ggsave(
+    paste0("./figures/rt/rt_prediction_testing_set_fig2h_",i,".png"),width=4.5,height=4.5,dpi = 600,units="cm"
+  )
+}
+
+output_prediction_rt_test_result %>% 
+  write_tsv(
+    "./figures/sfig7.tsv"
+  )
+```
+
+
+# Supplement Fig. 8
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm %>% 
+  distinct(set) %>% pull(set) -> set_vector
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm %>% 
+  summarize(
+    .by = set,
+    experiment = first(experiment),
+    replicate = first(replicate),
+    enzyme = first(enzyme),
+    count = n(),
+    rt_check = sum(rt_check)
+  )
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm %>% 
+  summarize(
+    .by = set,
+    experiment = first(experiment),
+    replicate = first(replicate),
+    enzyme = first(enzyme),
+    count = n(),
+    rt_check = sum(rt_check)
+  ) %>% pull(set) -> set_vector
+
+i=1 
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% filter(
+  rt_check==1
+)
+for (i in 1:12){
+  paste0(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      summarize(
+        .by = set,
+        experiment = first(experiment),
+        replicate = first(replicate),
+        enzyme = first(enzyme),
+        count = n(),
+        rt_check = sum(rt_check)
+      ) %>% 
+      filter(
+        set == set_vector[i]
+      ) %>% 
+      pull(rt_check),
+    "/",
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      summarize(
+        .by = set,
+        experiment = first(experiment),
+        replicate = first(replicate),
+        enzyme = first(enzyme),
+        count = n(),
+        rt_check = sum(rt_check)
+      ) %>% 
+      filter(
+        set == set_vector[i]
+      ) %>% 
+      pull(count)
+  ) -> count_for_rt
+
+  summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+    filter(
+      set == set_vector[i]
+    ) %>% 
+    mutate(
+      rt_norm = (right_time - left_time)* rt_norm + left_time,
+      rt_pred = (right_time - left_time)* rt_pred + left_time,
+      fit = (right_time - left_time)* fit + left_time,
+      lwr = (right_time - left_time)* lwr + left_time,
+      upr = (right_time - left_time)* upr + left_time
+    ) %>% 
+    ggplot(aes(x=rt_norm, y=rt_pred))+
+    geom_point(
+      aes(color = fct(as.character(rt_check),levels =c("0","1"))),
+      size=0.5,alpha=0.5
+    )+
+    annotate(
+      "text",x=-Inf,y=Inf,hjust=-0.2,vjust=2,
+      label=paste0("Passed = ",count_for_rt),size =4
+    )+
+    geom_line(aes(x=lwr), color = "red", linetype = "dashed")+
+    geom_line(aes(x=upr), color = "red", linetype = "dashed")+
+    #geom_smooth(method=lm, se=TRUE)+
+    #lims(x=c(0,1),y=c(0,1))+
+    scale_color_manual(
+      values = c("black","red")
+    )+
+    labs(
+      x="Observed RT (min)",
+      y="Predicted RT (min)"
+    )+
+    lims(x=c(30,140),y=c(30,140))+
+    theme_classic2()+
+    theme(
+      legend.position = "none",
+      axis.text = element_text(color = "black",size=10),
+      axis.title = element_text(color = "black",size=11)
+    )
+  ggsave(
+    paste0("./figures/rt/rt_prediction_test3_set",i,".png"),width=10,height=10,dpi = 600,units="cm"
+  )
+}
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm %>% 
+  write_tsv(
+    "./figures/supple8.tsv"
+  )
+
+
+```
+
+#Supplement Fig. 9a-b
+```{r}
+##A
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  select(
+    b_ion_errors
+  ) %>% 
+  unnest(b_ion_errors) %T>% #pull(b_ion_errors) %>% sd() #-0.001370094 sd 0.01418807
+  write_tsv(
+    "./figures/met_b_error_dist_rev.tsv"
+  )->supple9a
+
+supple9a %>% 
+  ggplot(
+    aes(x=b_ion_errors)
+  )+
+  geom_histogram(
+    binwidth = 0.001,
+    fill = "#377EB8",
+    color = "black",
+    linewidth = 0.1
+  )+
+  geom_vline(
+    aes(xintercept = mean(b_ion_errors)),
+    linetype = "dashed",
+    color = "black"
+  )+
+  scale_x_continuous(expand = c(0, 0))+
+  scale_y_continuous(expand = c(0, 0))+
+  labs(
+    x="b-ion errors (Da)",
+    y="Count"
+  )+
+  theme_pubr()+
+  theme(
+    axis.text = element_text(size = 8),
+    axis.title = element_text(size = 8)
+  )
+ggsave("./figures/met_b_error_dist_rev.png",width=9,height=6,dpi = 600,units="cm")
+      
+##B
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  select(
+    y_ion_errors
+  ) %>% 
+  unnest(y_ion_errors) %T>% #pull(b_ion_errors) %>% sd() #-0.001370094 sd 0.01418807
+  write_tsv(
+    "./figures/met_y_error_dist_rev.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=y_ion_errors)
+  )+
+  geom_histogram(
+    binwidth = 0.001,
+    fill = "#E41A1C",
+    color = "black",
+    linewidth = 0.1
+  )+
+  geom_vline(
+    aes(xintercept = mean(y_ion_errors)),
+    linetype = "dashed",
+    color = "black"
+  )+
+  scale_x_continuous(expand = c(0, 0))+
+  scale_y_continuous(expand = c(0, 0))+
+  labs(
+    x="b-ion errors (Da)",
+    y="Count"
+  )+
+  theme_pubr()+
+  theme(
+    axis.text = element_text(size = 8),
+    axis.title = element_text(size = 8)
+  )
+ggsave("./figures/met_y_error_dist_rev.png",width=9,height=6,dpi = 600,units="cm")
+
+# Data
+summaryfile_psm_for_testing3_pcc_rt_hfsm2%>% 
+  select(
+    index,b_ion_errors
+  ) %>% 
+  unnest(b_ion_errors) %>% 
+  write_tsv(
+    "./figures/met_b_error_dist_rev.tsv"
+  )
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2%>% 
+  select(
+    index,y_ion_errors
+  ) %>% 
+  unnest(y_ion_errors) %>% 
+  write_tsv(
+    "./figures/met_y_error_dist_rev.tsv"
+  )
+
+
+```
+
+# Supplement Fig. 9c-d
+```{r}
+
+#
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  mutate(
+    b_ion_errors = map_dbl(b_ion_errors,\(x) mean(x)),
+    y_ion_errors = map_dbl(y_ion_errors,\(x) mean(x))
+  ) %>% 
+  filter(
+    pcc_check ==1
+  ) %>% 
+  select(index,b_ion_errors,y_ion_errors) %T>% 
+  write_tsv(
+    "./figures/sfig9c.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=b_ion_errors,y=y_ion_errors)
+  )+
+  geom_point(
+    data = summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      mutate(
+        b_ion_errors = map_dbl(b_ion_errors,\(x) mean(x)),
+        y_ion_errors = map_dbl(y_ion_errors,\(x) mean(x))
+      ) %>% 
+      filter(
+        pcc_check ==0
+      ) %>% 
+      select(b_ion_errors,y_ion_errors),
+    colour = "grey",
+    alpha = 0.8
+  )+
+  geom_pointdensity(adjust=0.005)+
+  scale_color_viridis()+
+  scale_y_continuous(
+    limits = c(-0.05,0.05)
+  )+
+  scale_x_continuous(
+    limits = c(-0.05,0.05)
+  )+
+  labs(
+    x="b-ion Errors (Da)",
+    y="y-ion Errors (Da)",
+    color = "Number of Neighbors"
+  )+
+  theme_bw()+
+  theme(
+    legend.frame = element_rect(linewidth = 0.2),
+    legend.position = c(.5,.85),
+    legend.direction = "horizontal",
+    legend.title.position = "top",
+    legend.text = element_text(color="black",size=9),
+    axis.text = element_text(color="black",size=10),
+    axis.title = element_text(size=12)
+  )
+ggsave("./figures/sfig9c.png",width=10,height=10,dpi = 600,units="cm")
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  mutate(
+    b_ion_errors = map_dbl(b_ion_errors,\(x) mean(x)),
+    y_ion_errors = map_dbl(y_ion_errors,\(x) mean(x))
+  ) %>% 
+  filter(
+    rt_check ==1
+  ) %>% 
+  select(index,b_ion_errors,y_ion_errors) %T>% 
+  write_tsv(
+    "./figures/sfig9d.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=b_ion_errors,y=y_ion_errors)
+  )+
+  geom_point(
+    data = summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      mutate(
+        b_ion_errors = map_dbl(b_ion_errors,\(x) mean(x)),
+        y_ion_errors = map_dbl(y_ion_errors,\(x) mean(x))
+      ) %>% 
+      filter(
+        rt_check ==0
+      ) %>% 
+      select(b_ion_errors,y_ion_errors),
+    colour = "grey",
+    alpha = 0.8
+  )+
+  geom_pointdensity(adjust=0.005)+
+  scale_color_viridis()+
+  scale_y_continuous(
+    limits = c(-0.05,0.05)
+  )+
+  scale_x_continuous(
+    limits = c(-0.05,0.05)
+  )+
+  labs(
+    x="b-ion Errors (Da)",
+    y="y-ion Errors (Da)",
+    color = "Number of Neighbors"
+  )+
+  theme_bw()+
+  theme(
+    legend.position = c(.5,.85),
+    legend.direction = "horizontal",
+    legend.title.position = "top",
+    axis.text = element_text(color="black",size=10),
+    axis.title = element_text(size=12)
+  )
+ggsave("./figures/sfig9d_legend.png",width=10,height=10,dpi = 600,units="cm")
+
+```
+
+#Supplement Fig. 9e-h
+```{r}
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  unnest(b_ion_errors) %>% 
+  summarize(
+    .by = pcc_check,
+    b_mean = mean(b_ion_errors),
+    b_sd = sd(b_ion_errors)
+  ) %>% 
+  bind_cols(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      unnest(y_ion_errors) %>% 
+      summarize(
+        .by = pcc_check,
+        y_mean = mean(y_ion_errors),
+        y_sd = sd(y_ion_errors)
+      ) %>% select(y_mean,y_sd)
+  )->table1
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  unnest(b_ion_errors) %>% 
+  summarize(
+    .by = rt_check,
+    b_mean = mean(b_ion_errors),
+    b_sd = sd(b_ion_errors)
+  ) %>% 
+  bind_cols(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      unnest(y_ion_errors) %>% 
+      summarize(
+        .by = rt_check,
+        y_mean = mean(y_ion_errors),
+        y_sd = sd(y_ion_errors)
+      ) %>% select(y_mean,y_sd)
+  )->table2
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  unnest(b_ion_errors) %>% 
+  summarize(
+    .by = b_y_ttest_check,
+    b_mean = mean(b_ion_errors),
+    b_sd = sd(b_ion_errors)
+  ) %>% 
+  bind_cols(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      unnest(y_ion_errors) %>% 
+      summarize(
+        .by = b_y_ttest_check,
+        y_mean = mean(y_ion_errors),
+        y_sd = sd(y_ion_errors)
+      ) %>% select(y_mean,y_sd)
+  )->table3
+
+bind_rows(
+  table1,
+  table2,
+  table3
+) %>% 
+  mutate(
+    result = case_when(
+      pcc_check == 1 ~ "pcc_passed",
+      pcc_check == 0 ~ "pcc_failed",
+      rt_check == 1 ~ "rt_passed",
+      rt_check == 0 ~ "rt_failed",
+      b_y_ttest_check == 1 ~ "smert_passed",
+      b_y_ttest_check == 0 ~ "smert_failed"
+    )
+  ) %>% 
+  select(result, b_mean,b_sd,y_mean,y_sd) -> table_smert_result
+
+
+remove(table1,table2, table3)
+
+
+table_smert_result %>% 
+  pivot_longer(
+    cols = c(b_mean,y_mean)
+  ) %>% 
+  filter(
+    str_detect(result, "passed")
+  ) %>% 
+  mutate(
+    sd = if_else(str_detect(name,"^b"),b_sd,y_sd)
+  ) %T>% 
+  write_tsv(
+    "./figures/2_05_masserror_mean.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=result, y=value,fill=name)
+  )+
+  geom_bar(
+    stat="identity",
+    position = "dodge"
+  )+
+  geom_hline(
+    aes(yintercept = 0)
+  )+
+  scale_y_continuous(
+    labels = \(x) x*1000
+  )+
+  scale_x_discrete(
+    labels = c("MS2 model\n passed", "RT model\n passed", "MET\n passed")
+  )+
+  scale_fill_discrete(
+    labels = c("b-ion","y-ion")
+  )+
+  labs(
+    y="Average Mass Error (mDa)"
+  )+
+  theme_bw()+
+  theme(
+    axis.title.x = element_blank(),
+    legend.title = element_blank(),
+    legend.position = "top",
+    axis.text = element_text(color = "black")
+  )
+ggsave("./figures/2_05_masserror_mean.png",width=10,height=10, units = "cm",dpi = 600)
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  unnest(
+    b_ion_errors
+  ) %>% 
+  filter(
+    pcc_check == 1
+  ) %>% 
+  select(index,b_ion_errors) %>% 
+  mutate(
+    ion = "b"
+  ) %>% 
+  rename(error=b_ion_errors) %>% 
+  bind_rows(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      unnest(
+        y_ion_errors
+      ) %>% 
+      filter(
+        pcc_check == 1
+      ) %>% 
+      select(index,y_ion_errors) %>% 
+      mutate(
+        ion = "y"
+      ) %>% 
+      rename(error=y_ion_errors)
+  ) %T>% 
+  write_tsv(
+    "./figures/2_05_pcc_error_ttest.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=ion, y=error,fill=ion)
+  )+
+  geom_boxplot()+
+  stat_compare_means(
+    method = "t.test",
+    hjust = -0.5,
+    label.y = 0.06
+  )+
+  scale_y_continuous(limits = c(-0.05,0.06),breaks = seq(-0.05,0.05,0.025))+
+  labs(
+    y="Average Mass Error (mDa)"
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.text = element_text(color="black",size = 12),
+    axis.title.x = element_blank()
+  )
+ggsave("./figures/2_05_pcc_error_ttest.png",width=10,height=10, units = "cm",dpi = 600)
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  unnest(
+    b_ion_errors
+  ) %>% 
+  filter(
+    rt_check == 1
+  ) %>% 
+  select(index,b_ion_errors) %>% 
+  mutate(
+    ion = "b"
+  ) %>% 
+  rename(error=b_ion_errors) %>% 
+  bind_rows(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      unnest(
+        y_ion_errors
+      ) %>% 
+      filter(
+        rt_check == 1
+      ) %>% 
+      select(index,y_ion_errors) %>% 
+      mutate(
+        ion = "y"
+      ) %>% 
+      rename(error=y_ion_errors)
+  ) %T>% 
+  write_tsv(
+    "./figures/2_05_rt_error_ttest.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=ion, y=error,fill=ion)
+  )+
+  geom_boxplot()+
+  stat_compare_means(
+    method = "t.test",
+    hjust = -0.5,
+    label.y = 0.06
+  )+
+  scale_y_continuous(limits = c(-0.05,0.06),breaks = seq(-0.05,0.05,0.025))+
+  labs(
+    y="Average Mass Error (mDa)"
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.text = element_text(color="black",size = 12),
+    axis.title.x = element_blank()
+  )
+ggsave("./figures/2_05_rt_error_ttest.png",width=10,height=10, units = "cm",dpi = 600)
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+  unnest(
+    b_ion_errors
+  ) %>% 
+  filter(
+    b_y_ttest_check == 1
+  ) %>% 
+  select(index,b_ion_errors) %>% 
+  mutate(
+    ion = "b"
+  ) %>% 
+  rename(error=b_ion_errors) %>% 
+  bind_rows(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      unnest(
+        y_ion_errors
+      ) %>% 
+      filter(
+        b_y_ttest_check == 1
+      ) %>% 
+      select(index,y_ion_errors) %>% 
+      mutate(
+        ion = "y"
+      ) %>% 
+      rename(error=y_ion_errors)
+  ) %T>% 
+  write_tsv(
+    "./figures/2_05_smert_error_ttest.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=ion, y=error,fill=ion)
+  )+
+  geom_boxplot()+
+  stat_compare_means(
+    method = "t.test",
+    hjust = -0.5,
+    label.y = 0.06
+  )+
+  scale_y_continuous(limits = c(-0.05,0.06),breaks = seq(-0.05,0.05,0.025))+
+  labs(
+    y="Average Mass Error (mDa)"
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.text = element_text(color="black",size = 12),
+    axis.title.x = element_blank()
+  )
+ggsave("./figures/2_05_smert_error_ttest.png",width=10,height=10, units = "cm",dpi = 600)
+```
+
+
+#Supplement Fig. 10
+```{r}
+read_rds(
+  "./export/psm_563516.rds"
+) -> psm_563516
+
+chisq.test(
+  matrix(
+    c(8506,1063,3296,298682),nrow=2,ncol=2
+  ),correct =FALSE
+)
+
+chisq.test(
+  matrix(
+    c(7159,941,3301,240568),nrow=2,ncol=2
+  ),correct =FALSE
+)
+
+
+psm_563516 %>% 
+  select(
+    index,enzyme,artefact_arg,diagnostic_ion_int_relative,peak_table
+  ) %>% 
+  filter(artefact_arg == TRUE) %>% 
+  mutate(
+    peak_table_diag = map(
+      peak_table,
+      \(x) mutate(x,rel_i = i/max(i)) %>% filter(`m/z`>202.128331 & `m/z`<202.148331)
+    )
+  ) %>% 
+  select(-peak_table) %>% 
+  unnest(peak_table_diag) ->psm_563516_diag
+
+#b
+psm_563516_diag %>% 
+  filter(enzyme == "trypsin") %T>% 
+  write_tsv(
+    "./figures/2_06_diagnostic_ions_mz_trypsin.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=`m/z`)
+  )+
+  geom_histogram(
+    aes(y=after_stat(density)),
+    binwidth = 0.0001,
+    fill="black",
+    color="white",
+    alpha = 0.5,
+    linewidth = 0.1
+  )+
+  geom_density(
+    color="red"
+  )+
+  geom_vline(
+    aes(xintercept = 202.143331),linetype="dashed"
+  )+
+  geom_vline(
+    aes(xintercept = 202.133331),linetype="dashed"
+  )+
+  scale_x_continuous(
+    limits = c(202.128331,202.148331),expand=c(0,0),
+    breaks= seq(202.123331,202.148331,0.005),
+    labels = scales::number_format(accuracy = 0.000001)
+    )+
+  scale_y_continuous(expand=c(0,0))+
+  labs(y="PSM Count")+
+  theme_bw()+
+  theme(
+    axis.text.y = element_text(color = "black",size=8),
+    axis.text.x = element_text(color = "black",size=8,angle=45,hjust=1),
+    axis.title = element_text(color = "black",size=8)
+  )
+ggsave(
+  "./figures/2_06_diagnostic_ions_mz_trypsin.png",width =6, height =6,dpi = 600, units ="cm"
+)
+
+
+#c
+psm_563516 %>% 
+  mutate(
+    diagnostic_ion_int_relative = if_else(is.na(diagnostic_ion_int_relative),0,diagnostic_ion_int_relative)
+  ) %>% 
+  filter(
+    artefact_arg==TRUE
+  ) %>% 
+  select(
+    enzyme, diagnostic_ion_int_relative
+  ) %>% 
+  mutate(
+    set = "training"
+  ) %T>%
+  write_tsv(
+    "./figures/3_07_diagnostic_ion_int_protease.tsv"
+  ) %>% 
+  ggplot(
+    aes(y=diagnostic_ion_int_relative,x=enzyme,fill = enzyme)
+  )+
+  geom_boxplot(
+    outlier.size = 0.25
+  )+
+  scale_x_discrete(
+    limits = c("trypsin","chymotrypsin"),
+    labels = c("Trypsin","Chymotrypsin")
+  )+
+  scale_y_continuous(
+    labels = \(x) scales::percent(x)
+  )+
+  labs(
+    x="Protease",
+    y="Relative b1-ion intensity (%)",
+    fill = "Protease"
+  )+
+  theme_classic2()+
+  theme(
+    axis.text.y = element_text(color = "black",size=8),
+    axis.text.x = element_text(color = "black",size=8),
+    axis.title = element_text(color = "black",size=8),
+    legend.position = "none",
+    legend.just = "left"
+  )
+ggsave("./figures/3_07_diagnostic_ion_int_protease.png",width = 6, height = 6, units = "cm",dpi=600)
+
+```
+
+#!Supplement Fig. 11
+```{r}
+#ML-filtered DAU
+#a
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% 
+  filter(
+    score_sum == 3
+  ) %>% 
+  distinct(Sequence,.keep_all = TRUE) %>% #339
+  select(
+    index,p5p1
+  ) %T>% 
+  write_tsv(
+    "./figures/3_02_dag_heatmap_mlfiltered.tsv"
+  ) %>% 
+  pull(p5p1) -> seq_logo_mlfiltered
+
+prepareProteomeByFTP(
+    source = NULL, species = "Homo sapiens",
+    fastaFile="UP000005640_9606_2301.fasta"
+  )-> logo_proteome
+
+{
+  formatSequence(
+    seq = seq_logo_mlfiltered,
+    proteome = logo_proteome, upstreamOffset = 5,
+    downstreamOffset = 1
+  ) -> dag_seq
+  
+  buildBackgroundModel(
+    dag_seq, 
+    background = "wholeProteome",
+    proteome = logo_proteome, 
+    testType = "fisher"
+  ) ->  bg_fisher
+  
+  png("./figures/3_02_dag_heatmap_mlfiltered.png", width = 10, height = 10, units = "cm", res = 600)
+  dagHeatmap(
+    testDAU(dag_seq, dagBackground = bg_fisher),
+    type="diff",
+    labels_col = c("P5","P4","P3","P2","P1"),
+    display_numbers = TRUE
+  )
+  dev.off()
+}
+
+#b
+
+summaryfile_psm_for_testing3_pcc_rt_hfsm2_basic_filtered %>% 
+  distinct(Sequence,.keep_all = TRUE) %>% #339
+  filter(
+    score_sum != 3
+  ) %>% 
+  select(
+    index,p5p1
+  ) %T>% 
+  write_tsv(
+    "./figures/3_02_dag_heatmap_not_mlfiltered.tsv"
+  ) %>%
+  pull(p5p1) -> seq_logo_not_mlfiltered
+
+{
+  formatSequence(
+    seq = seq_logo_not_mlfiltered,
+    proteome = logo_proteome, upstreamOffset = 5,
+    downstreamOffset = 1
+  ) -> dag_seq
+  
+  buildBackgroundModel(
+    dag_seq, 
+    background = "wholeProteome",
+    proteome = logo_proteome, 
+    testType = "fisher"
+  ) ->  bg_fisher
+  
+  png("./figures/3_02_dag_heatmap_not_mlfiltered.png", width = 10, height = 10, units = "cm", res = 600)
+  dagHeatmap(
+    testDAU(dag_seq, dagBackground = bg_fisher),
+    type="diff",
+    labels_col = c("P5","P4","P3","P2","P1"),
+    display_numbers = TRUE
+  )
+  dev.off()
+}
+
+
+```
+
+#Supplement Fig. 12a
+```{r}
+keyref <- keys(org.Hs.eg.db, keytype = "SYMBOL")
+AnnotationDbi::select(
+  org.Hs.eg.db, 
+  keys=keyref,   ###gene name vector
+  columns=c("SYMBOL","ENTREZID","GENENAME"),
+  keytype="SYMBOL"
+) -> gene_refs
+
+
+peptide_lfq_trinity_distinct_arg %>% 
+  mutate(
+    MGTG_MG132 = MGTG-MG132
+  ) %>%
+  left_join(
+    arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+      select(gene_position,loc,gene),
+    join_by(gene_position == gene_position)
+  ) %>% 
+  select(gene,MGTG_MG132) %>% 
+  arrange(desc(MGTG_MG132)) %>% 
+  distinct(gene,.keep_all = TRUE) %>% 
+  left_join(
+    gene_refs,
+    join_by(gene == SYMBOL)
+  ) %>% 
+  drop_na()-> temp_data
+
+temp_data %>% pull(MGTG_MG132)->temp1
+temp_data %>% pull(ENTREZID)->temp2
+  
+names(temp1) <- temp2
+
+temp_data %>% pull(MGTG_MG132)->temp3
+temp_data %>% pull(gene)->temp4
+names(temp3) <- temp4
+
+gsePathway(
+  geneList = temp1,
+  pvalueCutoff = 1
+) -> gse_result_reactome
+
+gse_result_reactome@result %>% 
+  tibble() %>% 
+  arrange(
+    pvalue
+  ) %>% 
+  slice_head(n=10) %T>% 
+  write_tsv(
+    "./figures/4_12_gsea_reactome_tgovermg.tsv"
+  ) %>% 
+  ggplot(
+    aes(
+      x=NES,
+      y=reorder(Description,NES),
+      fill = NES
+    )
+  )+
+  geom_bar(
+    stat = "identity"
+  )+
+  scale_fill_gradient2(
+    high = muted("red"),
+    mid = "white",
+    low = muted("blue"),
+  )+
+  labs(
+    x="NES (MGTG/MG132)",
+    y="Reactome"
+  )+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8),
+    axis.text.y =element_text(color = "black",size= 7),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/4_12_gsea_reactome_tgovermg.png",height = 5, width =7,dpi = 600,units = "cm"
+)
+```
+
+
+#Supplement Fig. 12b
+```{r}
+
+go_enriched_all %>% 
+  select(ONTOLOGY,ID,Description,experiment,qvalue,fold_enrich) %>% 
+  arrange(qvalue) %>% 
+  filter(
+    qvalue <0.01
+  ) %>% 
+  pull(ID) -> go_enriched_all_fdr001
+
+go_enriched_all %>% 
+  select(ONTOLOGY,ID,Description,experiment,qvalue,fold_enrich) %>% 
+  arrange(qvalue) %>% 
+  filter(
+    ID %in% go_enriched_all_fdr001
+  ) %>% 
+  pivot_wider(
+    id_cols = c(ONTOLOGY,ID,Description),
+    names_from = experiment,
+    values_from = qvalue
+  ) %>%   mutate(truncated_desc = paste0(ID," ",str_sub(Description,1,30))) -> go_enriched_all_fig3
+  
+
+go_enriched_all_fig3 %>% 
+  pivot_longer(
+    MOCK:MGTG
+  ) %>% 
+  arrange(value) %T>% 
+  write_tsv(
+    "./figures/4_09_tile_GO_all.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=fct(name,levels=c("MOCK","MG132","MGTG")),y=fct(truncated_desc,levels = go_enriched_all_fig3 %>% pull(truncated_desc) %>% unique() %>% rev()),fill = -log(value,10))
+  )+
+  geom_tile(
+    #width = 0.1
+  )+
+  scale_fill_distiller(
+    palette = "YlOrRd",
+    direction = 1,
+    na.value = "grey80"
+  )+
+  labs(
+    x="Experiment",
+    y="GO description",
+    fill = "Q value"
+  )+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8,angle = 45, hjust=1),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/4_09_tile_GO_all_rev.png",height = 18, width =9,dpi = 600,units = "cm"
+)
+
+#for a legend
+go_enriched_all_fig3 %>% 
+  pivot_longer(
+    MOCK:MGTG
+  ) %>% 
+  arrange(value) %T>% 
+  write_tsv(
+    "./figures/4_09_tile_GO_all.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=fct(name,levels=c("MOCK","MG132","MGTG")),y=fct(truncated_desc,levels = go_enriched_all_fig3 %>% pull(truncated_desc) %>% unique() %>% rev()),fill = -log(value,10))
+  )+
+  geom_tile(
+    #width = 0.1
+  )+
+  scale_fill_distiller(
+    palette = "YlOrRd",
+    direction = 1,
+    na.value = "grey80"
+  )+
+  labs(
+    x="Experiment",
+    y="GO description",
+    fill = "Q value"
+  )+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 8,angle = 45, hjust=1),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "top",
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/4_09_tile_GO_all_rev_legend.png",height = 18, width =18,dpi = 600,units = "cm"
+)
+
+```
+
+#Supplement Fig. 12c-d
+```{r}
+#from 1Analysis_240711.R
+table_go_cc_reduced_fdr0.05 %>% 
+  filter(Count >2) %T>% 
+  write_tsv(
+    "./figures/4_13_tile_gocc_rev.tsv"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(experiment,levels = c("MOCK","MG132","MGTG")),
+      y=term,
+      fill = -log(qvalue,10)
+    )
+  )+
+  geom_tile()+
+  scale_fill_distiller(
+    palette = "YlOrRd",
+    direction = 1,
+    na.value = "grey80"
+  )+
+  labs(
+    x="Experiment",
+    y="GOCC Terms",
+    fill = expression(-Log[10](FDR))
+  )+
+  theme_classic2()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 7,angle = 45,hjust = 1),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8,face="bold"),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size=8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/4_13_tile_gocc_rev.png",height = 6, width =9,dpi = 600,units = "cm"
+)
+
+table_go_cc_reduced_fdr0.05 %>% 
+  filter(Count >2) %>% 
+  ggplot(
+    aes(
+      x=fct(experiment,levels = c("MOCK","MG132","MGTG")),
+      y=term,
+      fill = -log(qvalue,10)
+    )
+  )+
+  geom_tile()+
+  scale_fill_distiller(
+    palette = "YlOrRd",
+    direction = 1,
+    na.value = "grey80"
+  )+
+  labs(
+    x="Experiment",
+    y="GOCC Terms",
+    fill = expression(-Log[10](FDR))
+  )+
+  theme_classic2()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 7,angle = 45,hjust = 1),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8,face="bold"),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "top",
+    legend.location = "plot",
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size=8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/4_13_tile_gocc_rev_legend.png",height = 6, width =9,dpi = 600,units = "cm"
+)
+
+table_go_cc_reduced_fdr0.05 %>% 
+  filter(Count >2) %T>% 
+  write_tsv(
+    "./figures/4_13_tile_gocc_count_rev.tsv"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(experiment,levels = c("MOCK","MG132","MGTG")),
+      y=term,
+      fill = Count
+    )
+  )+
+  geom_tile()+
+  scale_fill_distiller(
+    palette = "YlOrRd",
+    direction = 1,
+    na.value = "grey80"
+  )+
+  labs(
+    x="Experiment",
+    y="GOCC Terms",
+    fill = "Gene Count"
+  )+
+  theme_classic2()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 7,angle = 45,hjust = 1),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8,face="bold"),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "none",
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size=8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/4_13_tile_gocc_count_rev.png",height = 6, width =9,dpi = 600,units = "cm"
+)
+
+table_go_cc_reduced_fdr0.05 %>% 
+  filter(Count >2) %T>% 
+  write_tsv(
+    "./figures/4_13_tile_gocc_count_rev.tsv"
+  ) %>% 
+  ggplot(
+    aes(
+      x=fct(experiment,levels = c("MOCK","MG132","MGTG")),
+      y=term,
+      fill = Count
+    )
+  )+
+  geom_tile()+
+  scale_fill_distiller(
+    palette = "YlOrRd",
+    direction = 1,
+    na.value = "grey80"
+  )+
+  labs(
+    x="Experiment",
+    y="GOCC Terms",
+    fill = "Gene Count"
+  )+
+  theme_classic2()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 7,angle = 45,hjust = 1),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8,face="bold"),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "top",
+    legend.location = "plot",
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size=8),
+    legend.text = element_text(color = "black",size= 8)
+  )
+ggsave(
+  "./figures/4_13_tile_gocc_count_rev_legend.png",height = 6, width =9,dpi = 600,units = "cm"
+)
+```
+
+#Supplement Fig. 13
+```{r}
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+  filter(
+    MOCK >0
+  ) %>%
+  distinct(gene_position) %>% 
+  mutate(
+    gene_position = str_replace_all(gene_position,"\\|","_")
+  ) %>% 
+  pull(gene_position) ->gene_pos_mock_only
+
+#a
+peptide_lfq_trinity %>% 
+  pivot_longer(MG132_1_Free:MOCK_2_Arg) %>% 
+  drop_na(value) %>% 
+  filter(
+    gene_position %in% gene_pos_mock_only
+  ) %>% 
+  mutate(
+    experiment = str_split_i(name,"_",1),
+    arg = str_split_i(name,"_",3)
+  ) %>% 
+  ggplot(
+    aes(x= factor(experiment, levels = c("MOCK","MG132","MGTG")), y = value, fill = factor(experiment, levels = c("MOCK","MG132","MGTG")))
+  )+
+  geom_violin(linewidth = 0.2,scale="width")+
+  geom_boxplot(width = 0.1,linewidth = 0.2,outlier.size = 0)+
+  labs(x="Experiments", y="Z-score",fill="name")+
+  stat_compare_means(
+    comparisons = list(c("MOCK","MG132"),c("MOCK","MGTG"),c("MG132","MGTG")),
+    label = "p.format",
+    method="t.test",
+    label.y = c(4,4.8,4.3),
+    size = 3
+  )+
+  scale_fill_manual(
+    values =c(wesanderson::wes_palette(5,name="Zissou1",type="discrete")[c(1,3,5)]),
+    labels = c("MOCK","MG132","MGTG")
+  )+
+  lims(
+    y=c(-3.1,5.5)
+  )+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    # legend.title = element_blank(),
+    # legend.text = element_text(size = 8,color="black"),
+    # legend.key.width = unit(0.2,"cm"),
+    # legend.key.height = unit(0.2,"cm"),
+    # legend.margin = margin(t = 0, unit="cm"),
+    # legend.box.margin = margin(t = 0, unit="cm"),
+    # legend.box.spacing = unit(2, "pt"),
+    #axis.ticks.x = element_blank(),
+    #axis.text.x = element_blank(),
+    axis.text = element_text(size = 8,color="black"),
+    axis.title = element_text(size = 8,color="black"),
+    strip.text= element_text(size = 8,color="black"),
+    axis.title.x = element_blank(),
+    axis.ticks = element_line(color = "black")
+  )
+ggsave(
+  "./figures/4_08_mock_only_violin.png",height = 5, width =5,dpi = 600,units = "cm"
+)
+
+#b
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+  filter(
+    MOCK >0
+  ) %>% 
+  select(
+    gene_position,MOCK,MG132,MGTG
+  ) %>% 
+  arrange(
+    desc(gene_position)
+  ) %>% 
+  pivot_longer(MOCK:MGTG) %>% 
+  mutate(
+    value = na_if(value, 0)
+  ) %>% 
+  ggplot(
+    aes(y=fct(name,levels=c("MGTG","MG132","MOCK")), x= fct(gene_position,levels = unique(gene_position)), fill = value)
+  )+
+  geom_tile()+
+  geom_text(
+    aes(label = value)
+  )+
+  scale_fill_distiller(
+    palette = "YlOrRd",
+    direction = 1,
+    na.value = "grey80"
+  )+
+  labs(
+    y="Experiment",
+    x="Arginylated Sites only identified in MOCK",
+    fill = "#PSMs"
+  )+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 7,angle = 45,hjust = 1),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "right",
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )+
+  guides(
+    fill=guide_colourbar(barwidth=0.5, barheight = 4,label.position="right")
+  )
+ggsave(
+  "./figures/4_08_tile_mock.png",height = 5, width =12,dpi = 600,units = "cm"
+)
+
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+  filter(
+    MOCK >0
+  ) %>% 
+  select(
+    gene_position,argpair_MOCK,argpair_MG132,argpair_MGTG
+  ) %>% 
+  arrange(
+    desc(gene_position)
+  ) %>% 
+  pivot_longer(cols=c(argpair_MOCK,argpair_MG132,argpair_MGTG)) %>% 
+  mutate(
+    value = na_if(value, 0)
+  ) %>% 
+  ggplot(
+    aes(y=fct(name,levels=c("argpair_MGTG","argpair_MG132","argpair_MOCK")), x= fct(gene_position,levels = unique(gene_position)), fill = value)
+  )+
+  geom_tile()+
+  geom_text(
+    aes(label = value)
+  )+
+  scale_fill_distiller(
+    palette = "YlOrRd",
+    direction = 1,
+    na.value = "grey80"
+  )+
+  scale_y_discrete(
+    label = c("MGTG","MG132","MOCK")
+  )+
+  labs(
+    y="Experiment",
+    x="Arginylated Sites only identified in MOCK",
+    fill = "#PSMs"
+  )+
+  theme_bw()+
+  theme(
+    axis.text.x = element_text(color = "black",size= 7,angle = 45,hjust = 1),
+    axis.text.y =element_text(color = "black",size= 8),
+    axis.title = element_text(color = "black",size= 8),
+    plot.title = element_text(color = "black",size= 8),
+    legend.position = "right",
+    axis.ticks = element_line(color = "black"),
+    legend.title = element_text(color = "black",size= 8),
+    legend.text = element_text(color = "black",size= 8)
+  )+
+  guides(
+    fill=guide_colourbar(barwidth=0.5, barheight = 4,label.position="right")
+  )
+ggsave(
+  "./figures/4_08_tile_mock_free.png",height = 5, width =12,dpi = 600,units = "cm"
+)
+
+
+#c
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+  left_join(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+    distinct(
+      Sequence,p5p5prime
+    )
+  ) %>% 
+  filter(
+    MOCK >0 
+  ) %>%
+  # mutate(
+  #   p5p5prime = str_replace(p5p5prime,"(?<=.....).","X")
+  # ) %T>% 
+  write_tsv(
+    "./figures/sfig13_logo.tsv"
+  ) %>% 
+  pull(p5p5prime) %>% 
+  ggseqlogo(
+  )+
+  theme(
+    legend.position = "none"
+  ) -> fig_logo
+  
+  fig_logo$scales$scales[[1]]$labels <- c("P5","P4","P3","P2","P1","P1'","P2'","P3'","P4'","P5'")
+  fig_logo
+  ggsave("./figures/sfig13_logo.png",width = 8,height = 8, units = "cm", dpi = 600)
+```
+
+
+#Supplement Fig. 14
+```{r}
+
+#a
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+  left_join(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+    distinct(
+      Sequence,p5p5prime
+    )
+  ) %>% 
+  filter(
+    MOCK >0 
+  ) %>% 
+  select(
+    gene_position,Sequence, MOCK:MGTG, p5p5prime
+  ) %T>%
+  # mutate(
+  #   p5p5prime = str_replace(p5p5prime,"(?<=.....).","X")
+  # ) %T>% 
+  write_tsv(
+    "./figures/sfig14_mock.tsv"
+  ) %>% 
+  pull(p5p5prime) %>% 
+  ggseqlogo(
+  )+
+  theme(
+    legend.position = "none"
+  ) -> fig_logo
+  
+  fig_logo$scales$scales[[1]]$labels <- c("P5","P4","P3","P2","P1","P1'","P2'","P3'","P4'","P5'")
+  fig_logo
+  ggsave("./figures/sfig14_mock.png",width = 8,height = 4, units = "cm", dpi = 600)
+  
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+  left_join(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      distinct(
+        Sequence,p5p5prime
+      )
+  ) %>% 
+  filter(
+    MG132 >0 
+  ) %>% 
+  select(
+    gene_position,Sequence, MOCK:MGTG, p5p5prime
+  ) %T>%
+  write_tsv(
+    "./figures/sfig14_mg132.tsv"
+  ) %>% 
+  pull(p5p5prime) %>% 
+  ggseqlogo(
+  )+
+  theme(
+    legend.position = "none"
+  ) -> fig_logo
+
+fig_logo$scales$scales[[1]]$labels <- c("P5","P4","P3","P2","P1","P1'","P2'","P3'","P4'","P5'")
+fig_logo
+ggsave("./figures/sfig14_mg132.png",width = 8,height = 4, units = "cm", dpi = 600)
+
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+  left_join(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      distinct(
+        Sequence,p5p5prime
+      )
+  ) %>% 
+  filter(
+    MGTG >0 
+  ) %>% 
+  select(
+    gene_position,Sequence, MOCK:MGTG, p5p5prime
+  ) %T>%
+  write_tsv(
+    "./figures/sfig14_mgtg.tsv"
+  ) %>% 
+  pull(p5p5prime) %>% 
+  ggseqlogo(
+  )+
+  theme(
+    legend.position = "none"
+  ) -> fig_logo
+
+fig_logo$scales$scales[[1]]$labels <- c("P5","P4","P3","P2","P1","P1'","P2'","P3'","P4'","P5'")
+fig_logo
+ggsave("./figures/sfig14_mgtg.png",width = 8,height = 4, units = "cm", dpi = 600)
+
+#d signal 
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+  left_join(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      distinct(
+        Sequence,p5p5prime
+      )
+  ) %>% 
+  filter(cleavage_type=="SP") %>% 
+  select(gene_position,Sequence,p5p5prime,cleavage_type,cleavage_score,source_cleavage) %T>% 
+  write_tsv(
+    "./figures/3_05_logo_trinity_signal.tsv"
+  ) %>% 
+  select(p5p5prime) -> logo_data
+
+
+ggplot()+geom_logo(data = logo_data)+
+  theme_logo()+
+  theme(
+    legend.position = "none"
+  )->fig_logo
+
+fig_logo$scales$scales[[1]]$labels <- c("P5","P4","P3","P2","P1","P1'","P2'","P3'","P4'","P5'")
+
+fig_logo
+ggsave("./figures/3_05_logo_trinity_signal.png",width=10,height=10,dpi = 600,units="cm")
+
+##e transit
+
+{
+  arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+    left_join(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      distinct(
+        Sequence,p5p5prime
+      )
+  ) %>% 
+  filter(cleavage_type=="mTP") %>% 
+  select(gene_position,Sequence,p5p5prime,cleavage_type,cleavage_score,source_cleavage) %T>% 
+  write_tsv(
+    "./figures/3_05_logo_trinity_transit.tsv"
+  ) %>% 
+  select(p5p5prime) -> logo_data
+  
+  ggplot()+geom_logo(data = logo_data)+
+    theme_logo()+
+    theme(
+      legend.position = "none"
+    )->fig_logo
+  
+  fig_logo$scales$scales[[1]]$labels <- c("P5","P4","P3","P2","P1","P1'","P2'","P3'","P4'","P5'")
+  
+  fig_logo
+  ggsave("./figures/3_05_logo_trinity_transit.png",width=10,height=10,dpi = 600,units="cm")
+}
+##f NA
+
+{
+  arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+    left_join(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      distinct(
+        Sequence,p5p5prime
+      )
+  ) %>% 
+  filter(is.na(cleavage_type)) %>% 
+  select(gene_position,Sequence,p5p5prime,cleavage_type,cleavage_score,source_cleavage) %T>% 
+  write_tsv(
+    "./figures/3_05_logo_trinity_cleavage_na.tsv"
+  ) %>% 
+  ggplot()+geom_logo(data = logo_data)+
+    theme_logo()+
+    theme(
+      legend.position = "none"
+    )->fig_logo
+  
+  fig_logo$scales$scales[[1]]$labels <- c("P5","P4","P3","P2","P1","P1'","P2'","P3'","P4'","P5'")
+  
+  fig_logo
+  ggsave("./figures/3_05_logo_trinity_NA.png",width=10,height=10,dpi = 600,units="cm")
+}
+
+
+##g  caspase3
+
+{
+  arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+    left_join(
+    summaryfile_psm_for_testing3_pcc_rt_hfsm2 %>% 
+      distinct(
+        Sequence,p5p5prime
+      )
+  ) %>% 
+  filter(protease=="caspase-3") %>% 
+  select(gene_position,Sequence,p5p5prime,cleavage_type,cleavage_score,source_cleavage) %T>% 
+  write_tsv(
+    "./figures/3_05_logo_trinity_caspase3.tsv"
+  ) %>% 
+  select(p5p5prime) -> logo_data
+  
+  ggplot()+geom_logo(data = logo_data)+
+    theme_logo()+
+    theme(
+      legend.position = "none"
+    )->fig_logo
+  
+  fig_logo$scales$scales[[1]]$labels <- c("P5","P4","P3","P2","P1","P1'","P2'","P3'","P4'","P5'")
+  
+  fig_logo
+  ggsave("./figures/3_05_logo_trinity_caspase3.png",width=10,height=10,dpi = 600,units="cm")
+}
+
+
+
+```
+
+#Supplement Fig. 15
+```{r}
+arginylome_validation_matrix3_sequence_distinct %>%  
+  mutate(
+    subloc=str_split_i(Localizations,"\\|",1),
+    ml_filtered = if_else(score_sum ==3, "Passed","Failed")
+  ) %>%
+  select(
+    prot_pos_reposition,Sequence,subloc,ml_filtered,MOCK,MG132,MGTG
+  ) %>% 
+  write_tsv(
+    "./figures/sfig15.tsv"
+  )
+
+
+#a
+
+arginylome_validation_matrix3_sequence_distinct %>% 
+  mutate(
+    subloc=str_split_i(Localizations,"\\|",1)
+  ) %>%
+  summarise(
+    .by=c(subloc,trinity),
+    count =n()
+  ) %>% 
+  pivot_wider(names_from = trinity,id_cols = subloc,values_from = count) %>% 
+  mutate(
+    subloc = fct(subloc,level = c("Extracellular","Cell membrane","Lysosome/Vacuole","Golgi apparatus","Endoplasmic reticulum","Cytoplasm","Nucleus","Mitochondrion")),
+    Failed = replace_na(Failed,0),
+    sum = Failed+Passed,
+    perc = percent(Passed/sum,accuracy=1),
+    text = paste0(perc)
+  ) %>% arrange(subloc) %>% .$text -> fig_3_02_text
+
+arginylome_validation_matrix3_sequence_distinct %>% 
+  mutate(
+    subloc=str_split_i(Localizations,"\\|",1),
+    ml_filtered = if_else(score_sum ==3, "Passed","Failed")
+  ) %>%
+  summarise(
+    .by=c(subloc,ml_filtered),
+    count =n()
+  ) %T>% 
+  write_tsv(
+    "./figures/3_02_removed_arg_subloc.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=fct(subloc,level = c("Extracellular","Cell membrane","Lysosome/Vacuole","Golgi apparatus","Endoplasmic reticulum","Cytoplasm","Nucleus","Mitochondrion")),y=count,fill=ml_filtered)
+  )+
+  geom_bar(stat="identity",color="black",linewidth = 0.1)+
+  annotate(
+    geom = "text",
+    x=1:8,
+    y=220,
+    label = fig_3_02_text,
+    size = 3
+  )+
+  #geom_text(aes(label=count),position = position_stack(vjust=0.5),size=3)+
+  scale_fill_manual(
+    values = c(wesanderson::wes_palette("Royal1")[2],wesanderson::wes_palette("Royal1")[3])
+  )+
+  labs(x="Subcellular Localization",y="Site Count",fill="TrinityNmod")+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.text = element_text(color="black",size=8),
+    axis.text.x = element_text(angle=45,hjust=1),
+    axis.title = element_text(color="black",size = 10)
+  )
+ggsave("./figures/3_02_removed_arg_subloc.png",width=8,height=8, units = "cm",dpi = 600)
+
+
+#b
+arginylome_validation_matrix3_sequence_distinct %>% 
+  filter(MOCK>0) %>% 
+  mutate(
+    subloc=str_split_i(Localizations,"\\|",1)
+  ) %>%
+  summarise(
+    .by=c(subloc,trinity),
+    count =n()
+  ) %>% 
+  pivot_wider(names_from = trinity,id_cols = subloc,values_from = count) %>% 
+  mutate(
+    subloc = fct(subloc,level = c("Extracellular","Cell membrane","Lysosome/Vacuole","Golgi apparatus","Endoplasmic reticulum","Cytoplasm","Nucleus","Mitochondrion")),
+    Failed = replace_na(Failed,0),
+    Passed = replace_na(Passed,0),
+    sum = Failed+Passed,
+    perc = percent(Passed/sum,accuracy=0.1),
+    text = paste0(perc)
+  ) %>% arrange(subloc) %>% .$text -> fig_3_02_text_mock
+
+arginylome_validation_matrix3_sequence_distinct %>% 
+  filter(MOCK>0) %>% 
+  mutate(
+    subloc=str_split_i(Localizations,"\\|",1),
+    ml_filtered = if_else(score_sum ==3, "Passed","Failed")
+  ) %>%
+  summarise(
+    .by=c(subloc,ml_filtered),
+    count =n()
+  ) %T>% 
+  write_tsv(
+    "./figures/3_02_removed_arg_subloc_mock.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=fct(subloc,level = c("Extracellular","Cell membrane","Lysosome/Vacuole","Golgi apparatus","Endoplasmic reticulum","Cytoplasm","Nucleus","Mitochondrion")),y=count,fill=ml_filtered)
+  )+
+  geom_bar(stat="identity",color="black",linewidth = 0.1)+
+  annotate(
+    geom = "text",
+    x=1:5,
+    y=65,
+    label = fig_3_02_text_mock,
+    size = 2.3
+  )+
+  #geom_text(aes(label=count),position = position_stack(vjust=0.5),size=3)+
+  scale_fill_manual(
+    values = c(wesanderson::wes_palette("Royal1")[2],wesanderson::wes_palette("Royal1")[3])
+  )+
+  labs(x="Subcellular Localization",y="Count",fill="TrinityNmod")+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.text = element_text(color="black",size=8),
+    axis.text.x = element_text(angle=45,hjust=1),
+    axis.title = element_text(color="black",size = 10)
+  )
+ggsave("./figures/3_02_removed_arg_subloc_mock.png",width=8,height=8, units = "cm",dpi = 600)
+
+#c
+arginylome_validation_matrix3_sequence_distinct %>% 
+  filter(MG132>0) %>% 
+  mutate(
+    subloc=str_split_i(Localizations,"\\|",1)
+  ) %>%
+  summarise(
+    .by=c(subloc,trinity),
+    count =n()
+  ) %>% 
+  pivot_wider(names_from = trinity,id_cols = subloc,values_from = count) %>% 
+  mutate(
+    subloc = fct(subloc,level = c("Extracellular","Cell membrane","Lysosome/Vacuole","Golgi apparatus","Endoplasmic reticulum","Cytoplasm","Nucleus","Mitochondrion")),
+    Failed = replace_na(Failed,0),
+    Passed = replace_na(Passed,0),
+    sum = Failed+Passed,
+    perc = percent(Passed/sum,accuracy=0.1),
+    text = paste0(perc)
+  ) %>% arrange(subloc) %>% .$text -> fig_3_02_text_mg132
+
+arginylome_validation_matrix3_sequence_distinct %>% 
+  filter(MG132>0) %>% 
+  mutate(
+    subloc=str_split_i(Localizations,"\\|",1),
+    ml_filtered = if_else(score_sum ==3, "Passed","Failed")
+  ) %>%
+  summarise(
+    .by=c(subloc,ml_filtered),
+    count =n()
+  ) %T>% 
+  write_tsv(
+    "./figures/3_02_removed_arg_subloc_mg132.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=fct(subloc,level = c("Extracellular","Cell membrane","Lysosome/Vacuole","Golgi apparatus","Endoplasmic reticulum","Cytoplasm","Nucleus","Mitochondrion")),y=count,fill=ml_filtered)
+  )+
+  geom_bar(stat="identity",color="black",linewidth = 0.1)+
+  annotate(
+    geom = "text",
+    x=1:8,
+    y=90,
+    label = fig_3_02_text_mg132,
+    size = 2.3
+  )+
+  #geom_text(aes(label=count),position = position_stack(vjust=0.5),size=3)+
+  scale_fill_manual(
+    values = c(wesanderson::wes_palette("Royal1")[2],wesanderson::wes_palette("Royal1")[3])
+  )+
+  labs(x="Subcellular Localization",y="Count",fill="TrinityNmod")+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.text = element_text(color="black",size=8),
+    axis.text.x = element_text(angle=45,hjust=1),
+    axis.title = element_text(color="black",size = 10)
+  )
+ggsave("./figures/3_02_removed_arg_subloc_mg132.png",width=8,height=8, units = "cm",dpi = 600)
+
+#d
+arginylome_validation_matrix3_sequence_distinct %>% 
+  filter(MGTG>0) %>% 
+  mutate(
+    subloc=str_split_i(Localizations,"\\|",1)
+  ) %>%
+  summarise(
+    .by=c(subloc,trinity),
+    count =n()
+  ) %>% 
+  pivot_wider(names_from = trinity,id_cols = subloc,values_from = count) %>% 
+  mutate(
+    subloc = fct(subloc,level = c("Extracellular","Cell membrane","Lysosome/Vacuole","Golgi apparatus","Endoplasmic reticulum","Cytoplasm","Nucleus","Mitochondrion")),
+    Failed = replace_na(Failed,0),
+    Passed = replace_na(Passed,0),
+    sum = Failed+Passed,
+    perc = percent(Passed/sum,accuracy=0.1),
+    text = paste0(perc)
+  ) %>% arrange(subloc) %>% .$text -> fig_3_02_text_mgtg
+
+arginylome_validation_matrix3_sequence_distinct %>% 
+  filter(MGTG>0) %>% 
+  mutate(
+    subloc=str_split_i(Localizations,"\\|",1),
+    ml_filtered = if_else(score_sum ==3, "Passed","Failed")
+  ) %>%
+  summarise(
+    .by=c(subloc,ml_filtered),
+    count =n()
+  ) %T>% 
+  write_tsv(
+    "./figures/3_02_removed_arg_subloc_mgtg.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=fct(subloc,level = c("Extracellular","Cell membrane","Lysosome/Vacuole","Golgi apparatus","Endoplasmic reticulum","Cytoplasm","Nucleus","Mitochondrion")),y=count,fill=ml_filtered)
+  )+
+  geom_bar(stat="identity",color="black",linewidth = 0.1)+
+  annotate(
+    geom = "text",
+    x=1:7,
+    y=125,
+    label = fig_3_02_text_mgtg,
+    size = 2.3
+  )+
+  #geom_text(aes(label=count),position = position_stack(vjust=0.5),size=3)+
+  scale_fill_manual(
+    values = c(wesanderson::wes_palette("Royal1")[2],wesanderson::wes_palette("Royal1")[3])
+  )+
+  labs(x="Subcellular Localization",y="Count",fill="TrinityNmod")+
+  theme_classic2()+
+  theme(
+    legend.position = "none",
+    axis.text = element_text(color="black",size=8),
+    axis.text.x = element_text(angle=45,hjust=1),
+    axis.title = element_text(color="black",size = 10)
+  )
+ggsave("./figures/3_02_removed_arg_subloc_mgtg.png",width=8,height=8, units = "cm",dpi = 600)
+
+```
+
+#rev2.2
+```{r}
+read_tsv(
+      "C:/Users/admin/alphapeptdeep/project_backup/folder/alphapeptdeep/inrich/output/output_metrics_pretrained_model_trypsin_231206.tsv"
+    ) %>% 
+      mutate(
+        model = "pretrained"
+      ) %>% 
+      bind_rows(
+        read_tsv(
+          "C:/Users/admin/alphapeptdeep/project_backup/folder/alphapeptdeep/inrich/output/output_metrics_built_model_trypsin_231206.tsv"
+        ) %>% 
+          mutate(
+            model = "built"
+          )
+      ) %>% 
+      bind_rows(
+        read_tsv(
+          "C:/Users/admin/alphapeptdeep/project_backup/folder/alphapeptdeep/inrich/output/output_metrics_describ_for_311547_trypsin_231130.tsv"
+        ) %>% 
+          mutate(
+            model = "finetuned"
+          )
+      ) %>% 
+      bind_rows(
+        read_tsv(
+          "C:/Users/admin/alphapeptdeep/project_backup/folder/alphapeptdeep/inrich/output/output_metrics_describ_for_311547_wo_arg_trypsin_231213.tsv"
+        ) %>% 
+          mutate(
+            model = "finetunedwoarg"
+          )
+      )-> output_prediction_comparison_trypsin_for_rev22
+
+output_prediction_comparison_trypsin_for_rev22 %>%
+      mutate(
+        model = fct(model,levels=c("pretrained","built","finetuned","finetunedwoarg"))
+      ) %>% 
+  filter(
+    str_detect(mods,"Acetyl\\@Any")
+  ) %T>% 
+  write_tsv(
+    "./figures/rev22_result.tsv"
+  ) %>% 
+      ggplot(aes(x=model,y=PCC))+
+      geom_violin(aes(fill = model),linewidth = 0.1,scale = "width")+
+      labs(y="PCC")+
+      geom_boxplot(width = 0.1,outlier.shape = NA,linewidth = 0.1)+
+      scale_x_discrete(labels =c("Pretrained","From scratch","Fine-tuned","Fine-tuned w/o\nArg-starting peptides"))+
+      scale_fill_manual(
+        values = c("#4DAF4A","#377EB8","#E41A1C","#984EA3")
+      )+
+      scale_y_continuous(
+        limits=c(0,1)
+      )+
+      theme_classic2()+
+      theme(
+        legend.position = "none",
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(color = "black",size = 7),
+        axis.text.x = element_text(size=5),
+        axis.text.y = element_text(color = "black",size = 7)
+      )
+    ggsave("./figures/rev22_result.png",width =15, height = 10,dpi = 600,units = "cm")
+    
+output_prediction_comparison_trypsin_for_rev22 %>%
+  mutate(
+    model = fct(model,levels=c("pretrained","built","finetuned","finetunedwoarg"))
+  ) %>% 
+  filter(
+    str_detect(mods,"Acetyl\\@Any")
+  ) %>% 
+  summarize(
+    .by = model,
+    median(PCC)
+  )
+```
+
+#rev2.7
+```{r}
+arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+        distinct(Sequence) %>% pull(Sequence)
+
+peptide_lfq_all %>% 
+  filter(
+    Sequence %in% c(arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+        distinct(Sequence) %>% pull(Sequence))
+  ) %>% 
+  pivot_longer(
+    MG132_1_Acetyl:MOCK_2_Arg
+  ) %>% 
+  drop_na(value) %>% 
+  mutate(
+    value = log(value,10),
+    type = case_when(
+      str_detect(name,"Arg")~"Arg",
+      str_detect(name,"Acetyl")~"Acetyl",
+      str_detect(name,"Free")~"Unmodified"
+    ),
+    data_name = str_extract(name,"^[A-Z0-9]+\\_[1-2]"),
+    data_name = fct(data_name,levels = c("MOCK_1","MOCK_2","MG132_1","MG132_2","MGTG_1","MGTG_2"))
+  ) %T>% 
+  write_tsv(
+    "./figures/reviewer2_7.tsv"
+  ) %>%
+  ggplot(
+    aes(x=data_name,y=value,fill=type)
+  )+
+  geom_boxplot()+
+  labs(
+    y="Log10 LFQ Intensity",
+    x="Experiments (Treatment_Replicate)"
+  )
+ggsave("./figures/reviewer2_7.png",width = 20,height = 12, units = "cm", dpi = 600)
+  
+peptide_lfq_all %>% 
+  filter(
+    Sequence %in% c(
+      arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+        filter(str_detect(protease,"caspase")) %>% 
+        distinct(Sequence) %>% 
+        pull(Sequence)
+    )
+  ) %>% 
+  pivot_longer(
+    MG132_1_Acetyl:MOCK_2_Arg
+  ) %>% 
+  drop_na(value) %>% 
+  mutate(
+    value = log(value,10),
+    type = case_when(
+      str_detect(name,"Arg")~"Arg",
+      str_detect(name,"Acetyl")~"Acetyl",
+      str_detect(name,"Free")~"Unmodified"
+    ),
+    data_name = str_extract(name,"^[A-Z0-9]+\\_[1-2]"),
+    data_name = fct(data_name,levels = c("MOCK_1","MOCK_2","MG132_1","MG132_2","MGTG_1","MGTG_2"))
+  ) %T>% 
+  write_tsv(
+    "./figures/reviewer2_7_caspase.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=data_name,y=value,fill=type)
+  )+
+  geom_boxplot()+
+  labs(
+    y="Log10 LFQ Intensity",
+    x="Experiments (Treatment_Replicate)"
+  )
+ggsave("./figures/reviewer2_7_caspase.png",width = 15,height = 10, units = "cm", dpi = 600)
+
+peptide_lfq_all %>% 
+  filter(
+    Sequence %in% c(
+      arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+        filter(str_detect(Localizations,"^Extracellular$")) %>% 
+        distinct(Sequence) %>% 
+        pull(Sequence)
+    )
+  ) %>% 
+  pivot_longer(
+    MG132_1_Acetyl:MOCK_2_Arg
+  ) %>% 
+  drop_na(value) %>% 
+  mutate(
+    value = log(value,10),
+    type = case_when(
+      str_detect(name,"Arg")~"Arg",
+      str_detect(name,"Acetyl")~"Acetyl",
+      str_detect(name,"Free")~"Unmodified"
+    ),
+    data_name = str_extract(name,"^[A-Z0-9]+\\_[1-2]"),
+    data_name = fct(data_name,levels = c("MOCK_1","MOCK_2","MG132_1","MG132_2","MGTG_1","MGTG_2"))
+  ) %T>% 
+  write_tsv(
+    "./figures/reviewer2_7_secreted.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=data_name,y=value,fill=type)
+  )+
+  geom_boxplot()+
+  labs(
+    y="Log10 LFQ Intensity",
+    x="Experiments (Treatment_Replicate)"
+  )
+ggsave("./figures/reviewer2_7_secreted.png",width = 15,height = 10, units = "cm", dpi = 600)
+
+peptide_lfq_all %>% 
+  filter(
+    Sequence %in% c(
+      arginylome_validation_matrix3_sequence_distinct_trinity %>% 
+        filter(gene_position %in% c("LSM3|7","EIF4B|46","IGFBP4|22","TMEM59|36","UQCRHL|15")) %>% 
+        distinct(Sequence) %>% 
+        pull(Sequence)
+    )
+  ) %>% 
+  pivot_longer(
+    MG132_1_Acetyl:MOCK_2_Arg
+  ) %>% 
+  drop_na(value) %>% 
+  mutate(
+    value = log(value,10),
+    type = case_when(
+      str_detect(name,"Arg")~"Arg",
+      str_detect(name,"Acetyl")~"Acetyl",
+      str_detect(name,"Free")~"Unmodified"
+    ),
+    data_name = str_extract(name,"^[A-Z0-9]+"),
+    data_name = fct(data_name,levels = c("MOCK","MG132","MGTG"))
+  ) %T>% 
+  write_tsv(
+    "./figures/reviewer2_7_selectedgene.tsv"
+  ) %>% 
+  ggplot(
+    aes(x=data_name,y=value,fill=type)
+  )+
+  geom_boxplot()+
+  facet_wrap(
+    vars(gene),
+    ncol = 5
+  )+
+  labs(
+    y="Log10 LFQ Intensity",
+    x="Experiments (Treatment)"
+  )+
+  theme(
+    axis.text.x = element_text(angle = 45,hjust = 1)
+  )
+ggsave("./figures/reviewer2_7_selected_gene.png",width = 15,height = 8, units = "cm", dpi = 600)
+
+
+```
+
+
+
+
+
