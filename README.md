@@ -8,7 +8,7 @@ The workflow implements a two-stage search, **MS2/RT transfer-learning–based r
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![R ≥ 4.2](https://img.shields.io/badge/R-%E2%89%A5%204.2-blue)
 ![Python ≥ 3.9](https://img.shields.io/badge/Python-%E2%89%A5%203.9-blue)
-![DOI](10.5281/zenodo.8475)
+[![DOI](https://zenodo.org/badge/894293098.svg)](https://doi.org/10.5281/zenodo.17568531)
 
 > **Release:** `v1.0.0` (manuscript version) 
 ---
